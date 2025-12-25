@@ -1,0 +1,11 @@
+To run backend:
+cd backend && source venv/bin/activate && uvicorn app.main:app --reload 
+
+To run worker:
+source worker/venv/bin/activate && PYTHONPATH=. python worker/worker.py
+
+To install forge:
+cd cli && pip install -e .
+
+To commit with no changes:
+git commit --allow-empty -m "forge status"

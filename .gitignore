@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Node / Docker
+node_modules/
+dist/
+
+# Forge local config
+.forge/
+~/.forge/
+
+# OS
+.DS_Store
