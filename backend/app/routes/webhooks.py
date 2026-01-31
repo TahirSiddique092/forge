@@ -47,7 +47,6 @@ async def github_webhook(request: Request):
 
     db: Session = SessionLocal()
 
-    # 🔗 Resolve repo → project
     binding = db.query(RepoBinding).filter(
         RepoBinding.repo_full_name == repo
     ).first()
@@ -55,17 +54,14 @@ async def github_webhook(request: Request):
     if not binding:
         return {"status": "repo not linked"}
 
-    # 🔐 Get GitHub token
     token = get_installation_token(installation_id)
 
-    # ✅ Create GitHub Check Run (IN PROGRESS)
     check_run_id = create_check_run(
         token=token,
         repo=repo,
         sha=commit_sha
     )
 
-    # 🧪 Create CI Run
     run = Run(
         project_id=binding.project_id,
         commit_sha=commit_sha,

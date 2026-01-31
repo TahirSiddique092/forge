@@ -24,7 +24,7 @@ def create_project(data: CreateProjectRequest, db: Session = Depends(get_db)):
     project = Project(
         name=data.name,
         project_id=f"proj_{uuid.uuid4().hex[:8]}",
-        owner_id=1,  # TEMP (auth later)
+        owner_id=1, 
         spec=data.spec.dict()
     )
     db.add(project)
@@ -45,13 +45,13 @@ def link_project(payload: dict):
     if not project_id or not repo:
         raise HTTPException(status_code=400, detail="Missing data")
 
-    # Normalize repo URL → owner/repo
+
     if repo.startswith("https://github.com/"):
         repo = repo.replace("https://github.com/", "").replace(".git", "")
 
     db: Session = SessionLocal()
 
-    # 1️⃣ Ensure project exists
+
     project = db.query(Project).filter(
         Project.project_id == project_id
     ).first()
@@ -59,7 +59,7 @@ def link_project(payload: dict):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 2️⃣ Upsert repo binding
+
     binding = db.query(RepoBinding).filter(
         RepoBinding.repo_full_name == repo
     ).first()
@@ -187,7 +187,6 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db)):
     if index < 1:
         raise HTTPException(status_code=400, detail="Index must be >= 1")
 
-    # Get Nth latest run for THIS project
     run = (
         db.query(Run)
         .filter(Run.project_id == project_id)
@@ -209,7 +208,7 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db)):
 
     return {
         "project": project_id,
-        "run_index": index,   # 👈 user-facing index
+        "run_index": index,   
         "status": run.status,
         "commit": run.commit_sha,
         "message": run.commit_message,

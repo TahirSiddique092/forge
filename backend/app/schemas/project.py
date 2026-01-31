@@ -7,10 +7,10 @@ class ProjectCommands(BaseModel):
     test: Optional[str] = None
 
 class ProjectSpec(BaseModel):
-    runtime: str                # node, python
-    runtime_version: str        # 20, 3.11
-    framework: str              # react, nextjs
-    tool: str                   # vite, next
+    runtime: str                
+    runtime_version: str        
+    framework: str             
+    tool: str                  
     commands: ProjectCommands
 
 class CreateProjectRequest(BaseModel):

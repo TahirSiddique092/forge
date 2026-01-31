@@ -12,7 +12,7 @@ def link(project_id: str):
 
     repo = cfg.get("repo")
     if not repo:
-        typer.echo("❌ Repo not initialized. Run `forge init` first.")
+        typer.echo("Repo not initialized. Run `forge init` first.")
         raise typer.Exit(1)
 
     # Call backend to bind repo → project

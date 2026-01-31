@@ -7,13 +7,11 @@ class Run(Base):
 
     id = Column(Integer, primary_key=True)
 
-    # Public project id (proj_xxxx)
     project_id = Column(String, index=True, nullable=False)
 
     commit_sha = Column(String, nullable=False)
     status = Column(String, default="queued")
 
-    # GitHub
     check_run_id = Column(BigInteger, nullable=True)
     installation_id = Column(BigInteger, nullable=False)
     

@@ -8,10 +8,10 @@ class RunStep(Base):
     id = Column(Integer, primary_key=True)
     run_id = Column(Integer, ForeignKey("runs.id", ondelete="CASCADE"))
 
-    name = Column(String, nullable=False)           # e.g. "Clone repo"
-    step_order = Column(Integer, nullable=False)    # 1, 2, 3...
+    name = Column(String, nullable=False)         
+    step_order = Column(Integer, nullable=False)    
 
-    status = Column(String, nullable=False)          # running / success / failed
+    status = Column(String, nullable=False)         
 
     stdout = Column(Text)
     stderr = Column(Text)

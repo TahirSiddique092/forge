@@ -5,7 +5,7 @@ from forge.commands.status import status
 from forge.commands.logs import logs
 from forge.commands.unlink import unlink
 
-app = typer.Typer(help="🔥 forge — spec-driven CI")
+app = typer.Typer(help="forge — spec-driven CI")
 
 app.command()(init)
 app.command()(link)

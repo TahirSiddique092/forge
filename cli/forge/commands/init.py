@@ -4,11 +4,9 @@ import subprocess
 from forge.config import save_config
 
 def init():
-    """
-    Initialize forge in this repository
-    """
+
     if not os.path.exists(".git"):
-        typer.echo("❌ Not a git repository")
+        typer.echo("Not a git repository")
         raise typer.Exit(1)
 
     repo = subprocess.check_output(
@@ -21,5 +19,5 @@ def init():
 
     save_config(config)
 
-    typer.echo("✅ forge initialized")
+    typer.echo("forge initialized")
     typer.echo(f"Repo: {repo}")

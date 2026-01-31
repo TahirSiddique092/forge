@@ -25,7 +25,7 @@ def complete_check_run(token, repo, check_run_id, conclusion, output=None):
         },
         json={
             "status": "completed",
-            "conclusion": conclusion,  # success | failure
+            "conclusion": conclusion, 
             "output": output or {
                 "title": "forge CI",
                 "summary": f"Build {conclusion}",
