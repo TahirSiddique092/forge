@@ -84,15 +84,11 @@ def run_job(job):
     db.execute(
         text("""
             UPDATE runs
-            SET status=:status,
-                stdout=:stdout,
-                stderr=:stderr
+            SET status=:status
             WHERE id=:id
         """),
         {
             "status": status,
-            "stdout": ci_result["stdout"],
-            "stderr": ci_result["stderr"],
             "id": run_id
         }
     )
@@ -105,69 +101,103 @@ def run_ci(job):
     repo = job["repo"]
     commit = job["commit"]
     project_id = job["project_id"]
+    run_id = job["run_id"]
 
     db = SessionLocal()
     spec = get_project_spec(project_id, db)
 
     image = get_docker_image(spec)
-    command = build_command(spec)
-
     workdir = tempfile.mkdtemp(prefix="forge-")
 
     try:
-        subprocess.run(
+        # STEP: clone
+        step = start_step(db, run_id, "clone")
+        r = subprocess.run(
             ["git", "clone", f"https://github.com/{repo}.git", workdir],
-            check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        subprocess.run(
+        finish_step(db, step, "success" if r.returncode == 0 else "failed", r.stdout, r.stderr)
+        if r.returncode != 0:
+            return {"success": False}
+
+        # STEP: checkout
+        step = start_step(db, run_id, "checkout")
+        r = subprocess.run(
             ["git", "checkout", commit],
             cwd=workdir,
-            check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        result = subprocess.run(
+        finish_step(db, step, "success" if r.returncode == 0 else "failed", r.stdout, r.stderr)
+        if r.returncode != 0:
+            return {"success": False}
+
+        # STEP: ci
+        step = start_step(db, run_id, "ci")
+        r = subprocess.run(
             [
                 "docker", "run", "--rm",
                 "-v", f"{workdir}:/app",
                 "-w", "/app",
                 image,
-                "sh", "-c", command
+                "sh", "-c", build_command(spec)
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=300
         )
+        finish_step(db, step, "success" if r.returncode == 0 else "failed", r.stdout, r.stderr)
 
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
+        return {"success": r.returncode == 0}
 
     except subprocess.TimeoutExpired:
-        print("⏱️ CI TIMED OUT")
-        return False
-
-    except subprocess.CalledProcessError as e:
-        print("❌ CI FAILED")
-        print(e.stdout)
-        print(e.stderr)
-        return False
+        return {"success": False}
 
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+
 # -------------------------------------------------------------------
 # HELPERS
 # -------------------------------------------------------------------
+
+def start_step(db, run_id, name):
+    step_id = db.execute(
+        text("""
+            INSERT INTO run_steps (run_id, name, status)
+            VALUES (:run_id, :name, 'running')
+            RETURNING id
+        """),
+        {"run_id": run_id, "name": name}
+    ).scalar()
+    db.commit()
+    return step_id
+
+
+def finish_step(db, step_id, status, stdout="", stderr=""):
+    db.execute(
+        text("""
+            UPDATE run_steps
+            SET status=:status,
+                stdout=:stdout,
+                stderr=:stderr,
+                finished_at=now()
+            WHERE id=:id
+        """),
+        {
+            "id": step_id,
+            "status": status,
+            "stdout": stdout,
+            "stderr": stderr
+        }
+    )
+    db.commit()
+
 
 def get_project_spec(project_id: str, db):
     result = db.execute(

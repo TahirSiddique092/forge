@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
 from app.core.database import SessionLocal
@@ -7,6 +8,7 @@ from app.core.database import SessionLocal
 from app.models.project import Project
 from app.models.repo_binding import RepoBinding
 from app.models.run import Run
+from app.models.run_step import RunStep
 
 router = APIRouter(prefix="/projects")
 
@@ -101,9 +103,7 @@ def project_status(project_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{project_id}/logs")
-def project_logs(project_id: str):
-    db = SessionLocal()
-
+def project_logs(project_id: str, db: Session = Depends(get_db)):
     run = (
         db.query(Run)
         .filter(Run.project_id == project_id)
@@ -114,13 +114,22 @@ def project_logs(project_id: str):
     if not run:
         return {"status": "no runs yet"}
 
+    steps = db.execute(
+        text("""
+            SELECT name, status, stdout, stderr, started_at, finished_at
+            FROM run_steps
+            WHERE run_id = :run_id
+            ORDER BY id
+        """),
+        {"run_id": run.id}
+    ).mappings().all()
+
     return {
         "project": project_id,
         "run_id": run.id,
         "status": run.status,
-        "stdout": run.stdout or "",
-        "stderr": run.stderr or "",
-        "created_at": run.created_at.isoformat()
+        "steps": steps,
+        "created_at": run.created_at
     }
 
 @router.post("/unlink")
@@ -171,4 +180,50 @@ def project_runs(
             }
             for r in runs
         ],
+    }
+
+@router.get("/{project_id}/runs/{index}/logs")
+def run_logs(project_id: str, index: int, db: Session = Depends(get_db)):
+    if index < 1:
+        raise HTTPException(status_code=400, detail="Index must be >= 1")
+
+    # Get Nth latest run for THIS project
+    run = (
+        db.query(Run)
+        .filter(Run.project_id == project_id)
+        .order_by(Run.created_at.desc())
+        .offset(index - 1)
+        .limit(1)
+        .first()
+    )
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    steps = (
+        db.query(RunStep)
+        .filter(RunStep.run_id == run.id)
+        .order_by(RunStep.step_order.asc())
+        .all()
+    )
+
+    return {
+        "project": project_id,
+        "run_index": index,   # 👈 user-facing index
+        "status": run.status,
+        "commit": run.commit_sha,
+        "message": run.commit_message,
+        "created_at": run.created_at.isoformat(),
+        "steps": [
+            {
+                "name": s.name,
+                "order": s.step_order,
+                "status": s.status,
+                "started_at": s.started_at,
+                "finished_at": s.finished_at,
+                "stdout": s.stdout or "",
+                "stderr": s.stderr or "",
+            }
+            for s in steps
+        ]
     }

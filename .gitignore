@@ -14,3 +14,5 @@ dist/
 
 # OS
 .DS_Store
+
+.forge-ci-cd.2025-12-24.private-key.pem
