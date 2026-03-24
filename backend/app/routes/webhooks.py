@@ -10,6 +10,7 @@ from app.models.repo_binding import RepoBinding
 from app.core.queue import enqueue_ci_job
 from app.integrations.github.auth import get_installation_token
 from app.integrations.github.checks import create_check_run
+from sqlalchemy import text
 
 
 router = APIRouter()
@@ -75,6 +76,11 @@ async def github_webhook(request: Request):
     db.add(run)
     db.commit()
     db.refresh(run)
+    
+    spec = db.execute(
+        text("SELECT spec FROM projects WHERE project_id = :pid"),
+        {"pid": run.project_id}
+    ).fetchone()
 
     enqueue_ci_job({
         "run_id": run.id,
@@ -82,7 +88,8 @@ async def github_webhook(request: Request):
         "repo": repo,     
         "commit": commit_sha,
         "check_run_id": check_run_id,
-        "installation_id": installation_id
+        "installation_id": installation_id,
+        "spec": spec
     })
 
 

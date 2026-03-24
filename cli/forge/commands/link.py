@@ -4,7 +4,10 @@ from forge.config import load_config, save_config
 
 BACKEND_URL = "http://localhost:8000"
 
-def link(project_id: str):
+def link(
+    project_id: str,
+    worker_token: str = typer.Option(..., "--worker-token", help="Worker token from dashboard")
+):
     """
     Link this repository to a forge project
     """
@@ -30,6 +33,7 @@ def link(project_id: str):
 
     # Save project_id locally
     cfg["project_id"] = project_id
+    cfg["worker_token"] = worker_token
     save_config(cfg)
 
     typer.echo("🔗 Repo linked successfully")

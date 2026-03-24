@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
+import hashlib
 from app.core.database import SessionLocal
 from app.schemas.project import CreateProjectRequest
 from app.core.database import SessionLocal
@@ -9,6 +10,7 @@ from app.models.project import Project
 from app.models.repo_binding import RepoBinding
 from app.models.run import Run
 from app.models.run_step import RunStep
+from app.models.worker import WorkerToken
 
 router = APIRouter(prefix="/projects")
 
@@ -27,14 +29,30 @@ def create_project(data: CreateProjectRequest, db: Session = Depends(get_db)):
         owner_id=1, 
         spec=data.spec.dict()
     )
+    
+    raw_token = f"wt_{uuid.uuid4().hex}"
+    hashed = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    worker = WorkerToken(
+        token=hashed,       
+        project_id=project.project_id
+    )
+    
     db.add(project)
+    db.add(worker)
     db.commit()
     db.refresh(project)
+    db.refresh(worker)
 
     return {
-        "project_id": project.project_id,
-        "name": project.name,
-        "spec": project.spec
+        "project_details": {
+            "project_id": project.project_id,
+            "name": project.name,
+            "spec": project.spec
+        },
+        "worker_details": {
+            "worker_token": raw_token
+        }
     }
 
 @router.post("/link")

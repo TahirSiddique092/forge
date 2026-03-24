@@ -1,13 +1,13 @@
 from fastapi import FastAPI
-from app.models import user, project  
-from app.routes import projects, webhooks, repos
+from app.routes import projects, webhooks, repos, worker
 
 
-app = FastAPI(title="MyCI Backend")
+app = FastAPI(title="Forge Backend")
 
 app.include_router(projects.router)
 app.include_router(webhooks.router)
 app.include_router(repos.router)
+app.include_router(worker.router)
 
 @app.get("/")
 def health():

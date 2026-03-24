@@ -27,7 +27,7 @@ redis_client = redis.from_url(
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 
-QUEUE_NAME = "ci_jobs"
+QUEUE_PREFIX = "ci_jobs"
 
 def run_job(job):
     run_id = job["run_id"]
