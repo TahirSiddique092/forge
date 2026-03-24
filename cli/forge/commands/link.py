@@ -1,8 +1,9 @@
 import typer
 import requests
 from forge.config import load_config, save_config
+import os
 
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "http://localhost:8000")
 
 def link(
     project_id: str,

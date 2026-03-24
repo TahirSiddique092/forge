@@ -2,8 +2,9 @@ import typer
 import requests
 from datetime import datetime
 from forge.config import load_config
+import os
 
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "http://localhost:8000")
 
 def fmt_time(ts: str):
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))

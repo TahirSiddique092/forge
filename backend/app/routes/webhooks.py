@@ -77,10 +77,9 @@ async def github_webhook(request: Request):
     db.commit()
     db.refresh(run)
     
-    spec = db.execute(
-        text("SELECT spec FROM projects WHERE project_id = :pid"),
-        {"pid": run.project_id}
-    ).fetchone()
+    project = db.query(Project).filter(
+        Project.project_id == binding.project_id
+    ).first()
 
     enqueue_ci_job({
         "run_id": run.id,
@@ -89,7 +88,7 @@ async def github_webhook(request: Request):
         "commit": commit_sha,
         "check_run_id": check_run_id,
         "installation_id": installation_id,
-        "spec": spec
+        "spec": project.spec
     })
 
 

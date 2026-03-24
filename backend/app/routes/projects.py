@@ -11,6 +11,8 @@ from app.models.repo_binding import RepoBinding
 from app.models.run import Run
 from app.models.run_step import RunStep
 from app.models.worker import WorkerToken
+from app.core.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter(prefix="/projects")
 
@@ -22,11 +24,11 @@ def get_db():
         db.close()
 
 @router.post("")
-def create_project(data: CreateProjectRequest, db: Session = Depends(get_db)):
+def create_project(data: CreateProjectRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = Project(
         name=data.name,
         project_id=f"proj_{uuid.uuid4().hex[:8]}",
-        owner_id=1, 
+        owner_id=current_user.id, 
         spec=data.spec.dict()
     )
     
@@ -175,7 +177,17 @@ def project_runs(
     project_id: str,
     limit: int | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id  # ← security check
+    ).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
     q = (
         db.query(Run)
         .filter(Run.project_id == project_id)
@@ -201,7 +213,16 @@ def project_runs(
     }
 
 @router.get("/{project_id}/runs/{index}/logs")
-def run_logs(project_id: str, index: int, db: Session = Depends(get_db)):
+def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
     if index < 1:
         raise HTTPException(status_code=400, detail="Index must be >= 1")
 

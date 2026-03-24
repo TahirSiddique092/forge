@@ -5,8 +5,9 @@ import time
 import tempfile
 import shutil
 from forge.config import load_config
+import os
 
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "http://localhost:8000")
 worker_app = typer.Typer()
 
 @worker_app.command("start")
