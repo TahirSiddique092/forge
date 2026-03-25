@@ -1,18 +1,16 @@
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
-class ProjectCommands(BaseModel):
-    install: str
-    build: str
-    test: Optional[str] = None
-
-class ProjectSpec(BaseModel):
-    runtime: str                
-    runtime_version: str        
-    framework: str             
-    tool: str                  
-    commands: ProjectCommands
+class ComponentSpec(BaseModel):
+    name: str                
+    root_dir: str             
+    platform: str             
+    runtime: str            
+    install_command: str       
+    test_command: Optional[str] = None
+    build_command: str        
+    env_vars: Dict[str, str] = {}
 
 class CreateProjectRequest(BaseModel):
     name: str
-    spec: ProjectSpec
+    components: List[ComponentSpec] 

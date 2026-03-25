@@ -9,3 +9,4 @@ class Project(Base):
     name = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
     spec = Column(JSON) 
+    deployment_metadata = Column(JSON, nullable=True, default={})

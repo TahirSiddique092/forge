@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
@@ -14,6 +14,7 @@ from app.models.worker import WorkerToken
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.core.limiter import limiter
+from app.core.orchestrator import start_deployment_sequence
 
 router = APIRouter(prefix="/projects")
 
@@ -265,4 +266,56 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current
             }
             for s in steps
         ]
+    }
+    
+@router.post("/{project_id}/deploy")
+async def deploy_project(
+    project_id: str, 
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+
+    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    last_run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
+
+    if not last_run or last_run.status != "success":
+        raise HTTPException(status_code=400, detail="Latest build/test failed. Fix your code first!")
+
+    last_run.deploy_status = "initiated" 
+    db.commit()
+
+    background_tasks.add_task(start_deployment_sequence, project.id, last_run.id)
+
+    return {
+        "message": "🚀 Deployment initiated!",
+        "run_id": last_run.id,
+        "status_command": f"forge deploy-status"
+    }
+    
+
+@router.get("/{project_id}/deploy/status")
+def get_deploy_status(
+    project_id: str, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+   
+    run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
+    
+    if not run or not run.deploy_status:
+        return {"status": "no_deployment_found"}
+
+    return {
+        "project_id": project_id,
+        "deploy_status": run.deploy_status, 
+        "components": run.component_results, 
+        "updated_at": run.created_at 
     }
