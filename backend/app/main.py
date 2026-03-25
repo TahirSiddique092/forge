@@ -1,10 +1,13 @@
 import asyncio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.routes import projects, webhooks, repos, worker, auth
+from app.routes import projects as projects_router
+from app.routes import webhooks as webhooks_router
+from app.routes import repos as repos_router
+from app.routes import worker as worker_router
+from app.routes import auth as auth_router
 from app.core.database import Base, engine
 from app.models import *
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -18,9 +21,7 @@ async def keep_redis_alive():
             print("Redis ping OK")
         except Exception as e:
             print(f"Redis ping failed: {e}")
-        # ping every 24 hours
         await asyncio.sleep(60 * 60 * 24)
-
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -34,28 +35,23 @@ app = FastAPI(title="Forge Backend")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SecurityHeadersMiddleware)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  
+    allow_origins=["http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
 
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
     asyncio.create_task(keep_redis_alive())
 
-app.include_router(auth.router)
-app.include_router(projects.router)
-app.include_router(webhooks.router)
-app.include_router(repos.router)
-app.include_router(worker.router)
+app.include_router(auth_router.router)
+app.include_router(projects_router.router)
+app.include_router(webhooks_router.router)
+app.include_router(repos_router.router)
+app.include_router(worker_router.router)
 
 @app.get("/ping")
 def ping():

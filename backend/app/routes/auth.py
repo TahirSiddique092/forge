@@ -73,9 +73,10 @@ def github_callback(request: Request, code: str):
     db.commit()
 
     # 5. redirect to frontend with token
-    return RedirectResponse(
-        f"{FRONTEND_URL}/auth/callback?token={session_token}"
-    )
+    # return RedirectResponse(
+    #     f"{FRONTEND_URL}/auth/callback?token={session_token}"
+    # )
+    return {"session_token": session_token, "username": username}
 
 
 @router.get("/me")
