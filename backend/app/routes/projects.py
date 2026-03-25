@@ -61,66 +61,55 @@ def create_project(request: Request, data: CreateProjectRequest, db: Session = D
     }
 
 @router.post("/link")
-def link_project(payload: dict):
+def link_project(
+    payload: dict, 
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
     project_id = payload.get("project_id")
     repo = payload.get("repo")
 
-    if not project_id or not repo:
-        raise HTTPException(status_code=400, detail="Missing data")
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
 
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or unauthorized")
 
     if repo.startswith("https://github.com/"):
         repo = repo.replace("https://github.com/", "").replace(".git", "")
 
-    db: Session = SessionLocal()
-
-
-    project = db.query(Project).filter(
-        Project.project_id == project_id
-    ).first()
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-
-    binding = db.query(RepoBinding).filter(
-        RepoBinding.repo_full_name == repo
-    ).first()
+    binding = db.query(RepoBinding).filter(RepoBinding.repo_full_name == repo).first()
 
     if binding:
         binding.project_id = project_id
     else:
-        binding = RepoBinding(
-            project_id=project_id,
-            repo_full_name=repo
-        )
+        binding = RepoBinding(project_id=project_id, repo_full_name=repo)
         db.add(binding)
 
     db.commit()
-
     return {"status": "linked", "repo": repo, "project_id": project_id}
 
 
 @router.get("/{project_id}/status")
-def project_status(project_id: str, db: Session = Depends(get_db)):
-    run = (
-        db.query(Run)
-        .filter(Run.project_id == project_id)
-        .order_by(Run.created_at.desc())
-        .first()
-    )
+def project_status(
+    project_id: str, 
+    current_user: User = Depends(get_current_user), # Fix 4: Added Auth
+    db: Session = Depends(get_db)
+):
+    # Verify ownership
+    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404)
 
+    run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
     if not run:
         return {"status": "no runs yet"}
 
     return {
         "project": project_id,
-        "run": {
-            "commit": run.commit_sha,
-            "status": run.status,
-            "message": run.commit_message,
-            "created_at": run.created_at
-        }
+        "run": {"commit": run.commit_sha, "status": run.status, "message": run.commit_message, "created_at": run.created_at}
     }
 
 

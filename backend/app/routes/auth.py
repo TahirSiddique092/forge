@@ -1,7 +1,7 @@
 import os
 import secrets
 import requests
-from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi import APIRouter, HTTPException, Header, Request, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session as DBSession
 from app.core.database import SessionLocal
@@ -9,11 +9,20 @@ from app.models.user import User
 from app.models.session import Session
 from app.core.limiter import limiter
 
+
+
 router = APIRouter(prefix="/auth")
 
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @router.get("/github")
 @limiter.limit("10/minute")
@@ -28,7 +37,7 @@ def github_login(request: Request):
 
 @router.get("/callback")
 @limiter.limit("10/minute")
-def github_callback(request: Request, code: str):
+def github_callback(request: Request, code: str, db: Session = Depends(get_db)):
     # 1. exchange code for github access token
     res = requests.post(
         "https://github.com/login/oauth/access_token",
@@ -57,8 +66,6 @@ def github_callback(request: Request, code: str):
     username = github_user["login"]
 
     # 3. find or create user in db
-    db: DBSession = SessionLocal()
-
     user = db.query(User).filter(User.github_id == github_id).first()
     if not user:
         user = User(github_id=github_id, username=username)
@@ -66,26 +73,23 @@ def github_callback(request: Request, code: str):
         db.commit()
         db.refresh(user)
 
-    # 4. create session token
+    # 4. Create session token
     session_token = secrets.token_hex(32)
     session = Session(token=session_token, user_id=user.id)
     db.add(session)
     db.commit()
 
+    return {"session_token": session_token, "username": username}
+
     # 5. redirect to frontend with token
     # return RedirectResponse(
     #     f"{FRONTEND_URL}/auth/callback?token={session_token}"
     # )
-    return {"session_token": session_token, "username": username}
 
 
 @router.get("/me")
-def get_me(authorization: str = Header(...)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
+def get_me(authorization: str = Header(...), db: Session = Depends(get_db)): 
     token = authorization.replace("Bearer ", "")
-    db: DBSession = SessionLocal()
     
     session = db.query(Session).filter(Session.token == token).first()
     if not session:

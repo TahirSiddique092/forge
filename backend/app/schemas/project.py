@@ -11,6 +11,9 @@ class ComponentSpec(BaseModel):
     build_command: str        
     env_vars: Dict[str, str] = {}
 
+class ProjectSpec(BaseModel):
+    components: List[ComponentSpec]
+
 class CreateProjectRequest(BaseModel):
     name: str
-    components: List[ComponentSpec] 
+    spec: ProjectSpec

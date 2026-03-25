@@ -10,10 +10,11 @@ class Run(Base):
     commit_sha = Column(String, nullable=False)
     commit_message = Column(Text, nullable=True)
     status = Column(String, default="queued") 
+    
+    deploy_status = Column(String, nullable=True) 
 
     check_run_id = Column(BigInteger, nullable=True)
     installation_id = Column(BigInteger, nullable=False)
 
     component_results = Column(JSON, nullable=True, default={})
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())

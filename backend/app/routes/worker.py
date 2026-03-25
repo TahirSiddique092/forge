@@ -1,6 +1,6 @@
 import json
 import hashlib
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Depends
 from app.core.queue import redis_client 
 from app.models.worker import WorkerToken
 from sqlalchemy.orm import Session
@@ -14,6 +14,13 @@ from app.core.limiter import limiter
 router = APIRouter(prefix="/worker")
 
 QUEUE_PREFIX = "ci_jobs"
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @router.get("/next-job")
 @limiter.limit("60/minute")
@@ -46,65 +53,34 @@ def get_project_id_from_token(token: str):
     return worker_token.project_id
 
 @router.patch("/runs/{run_id}/status")
-def update_status(run_id: int, payload: UpdateStatusPayload, x_worker_token: str = Header(...)):
-    
-    project_id = get_project_id_from_token(x_worker_token)
+def update_status(run_id: int, payload: UpdateStatusPayload, x_worker_token: str = Header(...), db: Session = Depends(get_db)):
+    project_id = get_project_id_from_token(x_worker_token, db)
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
     
-    installation_id = payload.installation_id
-    repo = payload.repo
-    check_run_id = payload.check_run_id
-    success = payload.success
-    
-    db = SessionLocal()
-
     try:
-        token = get_installation_token(installation_id)
-       
+        token = get_installation_token(payload.installation_id)
         complete_check_run(
             token=token,
-            repo=repo,
-            check_run_id=check_run_id,
-            conclusion="success" if success else "failure"
+            repo=payload.repo,
+            check_run_id=payload.check_run_id,
+            conclusion="success" if payload.success else "failure"
         )
-
-        status = "success" if success else "failed"
-
+        status = "success" if payload.success else "failed"
     except Exception as e:
-        try:
-            token = get_installation_token(installation_id)
-            
-            complete_check_run(
-                token=token,
-                repo=repo,
-                check_run_id=check_run_id,
-                conclusion="failure",
-                output={
-                    "title": "forge CI failed",
-                    "summary": str(e)
-                }
-            )
-        except Exception as inner:
-            return { "error": repr(inner) }
-
         status = "failed"
 
     db.execute(
-        text("""
-            UPDATE runs
-            SET status=:status
-            WHERE id=:id
-        """),
-        {
-            "status": status,
-            "id": run_id
-        }
+        text("UPDATE runs SET status=:status WHERE id=:id"),
+        {"status": status, "id": run_id}
     )
-
     db.commit()
-    
-    return {"message": "Updated succesfully"}
+    return {"message": "Updated successfully"}
+
+def get_project_id_from_token(token: str, db: Session):
+    hashed = hashlib.sha256(token.encode()).hexdigest()
+    worker_token = db.query(WorkerToken).filter(WorkerToken.token == hashed).first()
+    return worker_token.project_id if worker_token else None
 
 
 @router.post("/runs/{run_id}/steps")

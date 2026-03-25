@@ -8,6 +8,7 @@ from app.routes import webhooks as webhooks_router
 from app.routes import repos as repos_router
 from app.routes import worker as worker_router
 from app.routes import auth as auth_router
+from app.routes import credentials as credentials_router
 from app.core.database import Base, engine
 from app.models import *
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -50,6 +51,7 @@ async def startup():
 app.include_router(auth_router.router)
 app.include_router(projects_router.router)
 app.include_router(webhooks_router.router)
+app.include_router(credentials_router.router)
 app.include_router(repos_router.router)
 app.include_router(worker_router.router)
 

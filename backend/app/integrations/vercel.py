@@ -1,28 +1,17 @@
 import requests
-import os
 
-VERCEL_TOKEN = os.getenv("VERCEL_TOKEN")
-VERCEL_TEAM_ID = os.getenv("VERCEL_TEAM_ID") # Optional, if using teams
-
-def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict):
-    """
-    Triggers a Vercel deployment and injects dynamic environment variables.
-    """
+def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, token: str): # Added token param
     url = "https://api.vercel.com/v13/deployments"
-    headers = {"Authorization": f"Bearer {VERCEL_TOKEN}"}
+    headers = {"Authorization": f"Bearer {token}"}
     
-    # Convert Forge env_vars to Vercel format
-    vercel_envs = [
-        {"key": k, "value": v, "type": "encrypted"} 
-        for k, v in env_vars.items()
-    ]
+    vercel_envs = [{"key": k, "value": v, "type": "encrypted"} for k, v in env_vars.items()]
 
     payload = {
         "name": project_name,
         "gitSource": {
             "type": "github",
             "repo": repo_url,
-            "ref": "main" # Or the current commit SHA
+            "ref": "main"
         },
         "env": vercel_envs
     }
