@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.integrations.github.auth import get_installation_token
 from app.integrations.github.checks import complete_check_run
 from app.schemas.worker import UpdateStatusPayload, CreateStepPayload, FinishStepPayload
-from app.main import limiter
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/worker")
 

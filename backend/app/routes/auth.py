@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.core.database import SessionLocal
 from app.models.user import User
 from app.models.session import Session
-from app.main import limiter
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/auth")
 

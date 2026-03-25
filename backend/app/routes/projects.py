@@ -13,7 +13,7 @@ from app.models.run_step import RunStep
 from app.models.worker import WorkerToken
 from app.core.auth import get_current_user
 from app.models.user import User
-from app.main import limiter
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/projects")
 
