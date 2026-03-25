@@ -1,12 +1,13 @@
 import os
 import secrets
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session as DBSession
 from app.core.database import SessionLocal
 from app.models.user import User
 from app.models.session import Session
+from app.main import limiter
 
 router = APIRouter(prefix="/auth")
 
@@ -15,7 +16,8 @@ GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 @router.get("/github")
-def github_login():
+@limiter.limit("10/minute")
+def github_login(request: Request):
     url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
@@ -25,7 +27,8 @@ def github_login():
 
 
 @router.get("/callback")
-def github_callback(code: str):
+@limiter.limit("10/minute")
+def github_callback(request: Request, code: str):
     # 1. exchange code for github access token
     res = requests.post(
         "https://github.com/login/oauth/access_token",
@@ -76,7 +79,7 @@ def github_callback(code: str):
 
 
 @router.get("/me")
-def get_me(authorization: str = None):
+def get_me(authorization: str = Header(...)):
     if not authorization:
         raise HTTPException(status_code=401, detail="Not authenticated")
     

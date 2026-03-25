@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Header, HTTPException
+import json
+import hashlib
+from fastapi import APIRouter, Header, HTTPException, Request
 from app.core.queue import redis_client 
 from app.models.worker import WorkerToken
 from sqlalchemy.orm import Session
@@ -7,15 +9,15 @@ from sqlalchemy import text
 from app.integrations.github.auth import get_installation_token
 from app.integrations.github.checks import complete_check_run
 from app.schemas.worker import UpdateStatusPayload, CreateStepPayload, FinishStepPayload
-import json
-import hashlib
+from app.main import limiter
 
 router = APIRouter(prefix="/worker")
 
 QUEUE_PREFIX = "ci_jobs"
 
 @router.get("/next-job")
-def get_next_job(x_worker_token: str = Header(...)):
+@limiter.limit("60/minute")
+def get_next_job(request: Request, x_worker_token: str = Header(...)):
     
     project_id = get_project_id_from_token(x_worker_token)
     if not project_id:

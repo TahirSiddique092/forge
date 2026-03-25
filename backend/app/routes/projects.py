@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
@@ -13,6 +13,7 @@ from app.models.run_step import RunStep
 from app.models.worker import WorkerToken
 from app.core.auth import get_current_user
 from app.models.user import User
+from app.main import limiter
 
 router = APIRouter(prefix="/projects")
 
@@ -24,7 +25,8 @@ def get_db():
         db.close()
 
 @router.post("")
-def create_project(data: CreateProjectRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@limiter.limit("20/minute")
+def create_project(request: Request, data: CreateProjectRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = Project(
         name=data.name,
         project_id=f"proj_{uuid.uuid4().hex[:8]}",
@@ -88,7 +90,6 @@ def link_project(payload: dict):
         binding.project_id = project_id
     else:
         binding = RepoBinding(
-            id=str(uuid.uuid4()),
             project_id=project_id,
             repo_full_name=repo
         )

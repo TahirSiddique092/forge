@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import os
+import time
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
@@ -30,6 +31,13 @@ def verify_github_signature(payload: bytes, signature: str):
 async def github_webhook(request: Request):
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
+    timestamp = request.headers.get("X-GitHub-Delivery")  
+
+    github_timestamp = request.headers.get("X-Hub-Timestamp")
+    if github_timestamp:
+        age = int(time.time()) - int(github_timestamp)
+        if age > 300:
+            raise HTTPException(status_code=400, detail="Webhook too old")
 
     if not signature or not verify_github_signature(raw_body, signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
