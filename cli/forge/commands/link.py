@@ -1,6 +1,6 @@
 import typer
 import requests
-from forge.config import load_config, save_config
+from forge.config import load_config, save_config, get_auth_headers
 import os
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
@@ -32,7 +32,16 @@ def link(
         typer.echo("❌ Failed to link project")
         raise typer.Exit(1)
 
-    # Save project_id locally
+    
+    r = requests.post(
+        f"{BACKEND_URL}/projects/link",
+        json={
+            "project_id": project_id,
+            "repo": repo
+        },
+        headers=get_auth_headers()
+    )
+    
     cfg["project_id"] = project_id
     cfg["worker_token"] = worker_token
     save_config(cfg)

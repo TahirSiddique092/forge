@@ -1,22 +1,26 @@
 import typer
 import os
 import subprocess
-from forge.config import save_config
+from forge.config import load_config, save_config
 
 def init():
-
     if not os.path.exists(".git"):
         typer.echo("Not a git repository")
         raise typer.Exit(1)
 
-    repo = subprocess.check_output(
-        ["git", "remote", "get-url", "origin"]
-    ).decode().strip()
+    try:
+        repo = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"]
+        ).decode().strip()
+    except:
+        repo = "unknown"
 
-    config = {
-        "repo": repo
-    }
+    try:
+        config = load_config()
+    except:
+        config = {}
 
+    config["repo"] = repo
     save_config(config)
 
     typer.echo("forge initialized")
