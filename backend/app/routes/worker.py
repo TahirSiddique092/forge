@@ -24,9 +24,13 @@ def get_db():
 
 @router.get("/next-job")
 @limiter.limit("60/minute")
-def get_next_job(request: Request, x_worker_token: str = Header(...)):
+def get_next_job(
+    request: Request, 
+    x_worker_token: str = Header(...), 
+    db: Session = Depends(get_db) 
+):
+    project_id = get_project_id_from_token(x_worker_token, db)
     
-    project_id = get_project_id_from_token(x_worker_token)
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
 
@@ -38,19 +42,10 @@ def get_next_job(request: Request, x_worker_token: str = Header(...)):
 
     return {"job": json.loads(job_data)}
 
-def get_project_id_from_token(token: str):
-    db: Session = SessionLocal()
-
+def get_project_id_from_token(token: str, db: Session): 
     hashed = hashlib.sha256(token.encode()).hexdigest()
-    
-    worker_token = db.query(WorkerToken).filter(
-        WorkerToken.token == hashed
-    ).first()
-    
-    if not worker_token:
-        return None
-    
-    return worker_token.project_id
+    worker_token = db.query(WorkerToken).filter(WorkerToken.token == hashed).first()
+    return worker_token.project_id if worker_token else None
 
 @router.patch("/runs/{run_id}/status")
 def update_status(run_id: int, payload: UpdateStatusPayload, x_worker_token: str = Header(...), db: Session = Depends(get_db)):

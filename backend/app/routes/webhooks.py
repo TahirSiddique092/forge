@@ -55,8 +55,6 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
 
     installation_id = payload["installation"]["id"]
 
-    db: Session = SessionLocal()
-
     binding = db.query(RepoBinding).filter(RepoBinding.repo_full_name == repo).first()
     if not binding:
         return {"status": "repo not linked"}
