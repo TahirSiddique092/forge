@@ -1,10 +1,10 @@
 import typer
 import requests
 from datetime import datetime
-from forge.config import load_config
+from forge.config import load_config, get_auth_headers
 import os
 
-BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
 def fmt_time(ts: str):
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
@@ -30,7 +30,7 @@ def status(
     else:
         url = f"{BACKEND_URL}/projects/{project_id}/status"
 
-    r = requests.get(url)
+    r = requests.get(url, headers=get_auth_headers())
     if r.status_code != 200:
         typer.echo("Error: unable to fetch project status")
         raise typer.Exit(1)

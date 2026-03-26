@@ -1,9 +1,9 @@
 import typer
 import requests
-from forge.config import load_config
+from forge.config import load_config, get_auth_headers
 import os
 
-BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
 def logs(
     run: int | None = typer.Option(
@@ -22,7 +22,7 @@ def logs(
     else:
         url = f"{BACKEND_URL}/projects/{project_id}/logs"
 
-    r = requests.get(url)
+    r = requests.get(url, headers=get_auth_headers())
     if r.status_code != 200:
         typer.echo("❌ Failed to fetch logs")
         raise typer.Exit(1)
@@ -58,3 +58,4 @@ def logs(
 
         typer.echo("\n--- stderr ---")
         typer.echo((data.get("stderr") or "(empty)").rstrip())
+    

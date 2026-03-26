@@ -11,3 +11,10 @@ def load_config():
 def save_config(data: dict):
     CONFIG_PATH.parent.mkdir(exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(data, indent=2))
+
+def get_auth_headers():
+    cfg = load_config()
+    token = cfg.get("session_token")
+    if not token:
+        raise RuntimeError("Not logged in. Run `forge login`.")
+    return {"Authorization": f"Bearer {token}"}

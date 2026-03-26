@@ -5,14 +5,22 @@ from forge.commands.status import status
 from forge.commands.logs import logs
 from forge.commands.unlink import unlink
 from forge.commands.worker import worker_app
+from forge.commands.login import login
+from forge.commands.deploy import deploy             
+from forge.commands.deploy_status import deploy_status 
+from forge.commands.credentials import set_credential
 
-app = typer.Typer(help="forge — spec-driven CI")
+app = typer.Typer(help="forge — spec-driven CI/CD for Hackathons")
 
 app.command()(init)
 app.command()(link)
 app.command()(status)
 app.command()(logs)
 app.command()(unlink)
+app.command()(login)
+app.command(name="set-cred")(set_credential)
+app.command()(deploy)               
+app.command(name="deploy-status")(deploy_status) 
 
 app.add_typer(worker_app, name="worker")
 

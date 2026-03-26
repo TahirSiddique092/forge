@@ -1,6 +1,5 @@
 pyproject.toml
 forge/__init__.py
-forge/api.py
 forge/config.py
 forge/main.py
 forge.egg-info/PKG-INFO
@@ -10,8 +9,13 @@ forge.egg-info/entry_points.txt
 forge.egg-info/requires.txt
 forge.egg-info/top_level.txt
 forge/commands/_render_logs.py
+forge/commands/credentials.py
+forge/commands/deploy.py
+forge/commands/deploy_status.py
 forge/commands/init.py
 forge/commands/link.py
+forge/commands/login.py
 forge/commands/logs.py
 forge/commands/status.py
 forge/commands/unlink.py
+forge/commands/worker.py
