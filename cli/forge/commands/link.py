@@ -19,32 +19,29 @@ def link(
         typer.echo("Repo not initialized. Run `forge init` first.")
         raise typer.Exit(1)
 
-    # Call backend to bind repo → project
-    r = requests.post(
-        f"{BACKEND_URL}/projects/link",
-        json={
-            "project_id": project_id,
-            "repo": repo
-        }
-    )
+    # SUCCESSFUL CALL: One single request including the Authorization headers
+    try:
+        r = requests.post(
+            f"{BACKEND_URL}/projects/link",
+            json={
+                "project_id": project_id,
+                "repo": repo
+            },
+            headers=get_auth_headers()
+        )
 
-    if r.status_code != 200:
-        typer.echo("❌ Failed to link project")
+        if r.status_code != 200:
+            typer.echo(f"❌ Failed to link project: {r.status_code} - {r.text}")
+            raise typer.Exit(1)
+
+        # Save project_id locally
+        cfg["project_id"] = project_id
+        cfg["worker_token"] = worker_token
+        save_config(cfg)
+
+        typer.echo("Repo linked successfully")
+        typer.echo(f"Project ID: {project_id}")
+        
+    except RuntimeError as e:
+        typer.echo(f"❌ Auth Error: {e}")
         raise typer.Exit(1)
-
-    
-    r = requests.post(
-        f"{BACKEND_URL}/projects/link",
-        json={
-            "project_id": project_id,
-            "repo": repo
-        },
-        headers=get_auth_headers()
-    )
-    
-    cfg["project_id"] = project_id
-    cfg["worker_token"] = worker_token
-    save_config(cfg)
-
-    typer.echo("🔗 Repo linked successfully")
-    typer.echo(f"📦 Project ID: {project_id}")
