@@ -16,7 +16,14 @@ def get_app_jwt():
         "exp": now + (10 * 60),
         "iss": int(GITHUB_APP_ID),
     }
-    return jwt.encode(payload, GITHUB_PRIVATE_KEY, algorithm="RS256")
+    token = jwt.encode(payload, GITHUB_PRIVATE_KEY, algorithm="RS256")
+    
+    # DEBUG LOGS (Remove after fixing)
+    print(f"DEBUG: Key starts with: {GITHUB_PRIVATE_KEY[:20]}")
+    print(f"DEBUG: Token type: {type(token)}")
+    print(f"DEBUG: Token starts with: {str(token)[:15]}")
+    
+    return token.decode('utf-8') if isinstance(token, bytes) else token
 
 
 def get_installation_token(installation_id: int) -> str:
