@@ -2,29 +2,41 @@ import jwt
 import time
 import requests
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
 
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
-GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY").replace('\\n', '\n')
+# Strip leading/trailing whitespace AND potential quotes
+raw_key = os.getenv("GITHUB_PRIVATE_KEY", "")
+GITHUB_PRIVATE_KEY = raw_key.strip().strip('"').strip("'").replace('\\n', '\n')
 
 def get_app_jwt():
+    if not GITHUB_PRIVATE_KEY or not GITHUB_APP_ID:
+        print("CRITICAL: Missing GitHub App Credentials!", flush=True)
+        return None
+
     now = int(time.time())
     payload = {
-        "iat": now - 60,
-        "exp": now + (10 * 60),
-        "iss": int(GITHUB_APP_ID),
+        "iat": now - 60,           # Issued 60s ago to handle clock drift
+        "exp": now + (10 * 60),    # 10 minute expiry
+        "iss": int(GITHUB_APP_ID), # Must be an integer
     }
+    
+    # Generate the token
     token = jwt.encode(payload, GITHUB_PRIVATE_KEY, algorithm="RS256")
     
-    # DEBUG LOGS (Remove after fixing)
-    print(f"DEBUG: Key starts with: {GITHUB_PRIVATE_KEY[:20]}")
-    print(f"DEBUG: Token type: {type(token)}")
-    print(f"DEBUG: Token starts with: {str(token)[:15]}")
+    # Ensure it is a clean string (No b'...' prefix)
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
     
-    return token.decode('utf-8') if isinstance(token, bytes) else token
-
+    # Force logs to show on Render
+    print(f"DEBUG: Key length: {len(GITHUB_PRIVATE_KEY)}", flush=True)
+    print(f"DEBUG: Token Type: {type(token)}", flush=True)
+    print(f"DEBUG: Token starts with: {token[:15]}", flush=True)
+    
+    return token.strip() # Strip any accidental newlines from the final token
 
 def get_installation_token(installation_id: int) -> str:
     jwt_token = get_app_jwt()
@@ -38,8 +50,8 @@ def get_installation_token(installation_id: int) -> str:
     )
     
     if res.status_code != 201:
-        print(f"GitHub API Error: {res.status_code} - {res.text}") 
+        # This print works, so we know this part of the logs is visible
+        print(f"GitHub API Error: {res.status_code} - {res.text}", flush=True) 
         res.raise_for_status()
 
-    res.raise_for_status()
     return res.json()["token"]
