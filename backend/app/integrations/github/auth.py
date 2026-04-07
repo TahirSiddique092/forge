@@ -6,44 +6,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 1. Clean the App ID and Private Key immediately
-GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "").strip()
-# This removes accidental quotes and handles both literal and escaped newlines
-raw_key = os.getenv("GITHUB_PRIVATE_KEY", "").strip().strip('"').strip("'")
-GITHUB_PRIVATE_KEY = raw_key.replace('\\n', '\n')
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
+
+SECRET_FILE_PATH = "/etc/secrets/github_private_key.pem"
+
+def get_private_key():
+    if os.path.exists(SECRET_FILE_PATH):
+        with open(SECRET_FILE_PATH, "r") as f:
+            return f.read().strip()
+    
+    key = os.getenv("GITHUB_PRIVATE_KEY", "")
+    return key.replace('\\n', '\n').strip()
 
 def get_app_jwt():
-    if not GITHUB_APP_ID or not GITHUB_PRIVATE_KEY:
-        print("CRITICAL: Missing GitHub Credentials", flush=True)
+    private_key = get_private_key()
+    
+    if not private_key or not GITHUB_APP_ID:
+        print("CRITICAL: GitHub credentials missing!", flush=True)
         return None
 
     now = int(time.time())
     payload = {
-        # iat: 60s ago to be safe against clock drift
-        "iat": now - 60,
-        # exp: 5 minutes is plenty (GitHub max is 10)
-        "exp": now + (5 * 60),
-        # iss: MUST be an integer App ID
-        "iss": int(GITHUB_APP_ID), 
+        "iat": now - 60,         
+        "exp": now + (5 * 60),     
+        "iss": int(GITHUB_APP_ID),
     }
     
-    # Generate the token
-    token = jwt.encode(payload, GITHUB_PRIVATE_KEY, algorithm="RS256")
+    token = jwt.encode(payload, private_key, algorithm="RS256")
     
-    # Ensure it is a clean string with no hidden whitespace
     if isinstance(token, bytes):
         token = token.decode('utf-8')
-    
+        
     return token.strip()
 
 def get_installation_token(installation_id: int) -> str:
     jwt_token = get_app_jwt()
 
-    # The headers must be extremely clean
     headers = {
         "Authorization": f"Bearer {jwt_token}",
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28" # Recommended by GitHub
+        "X-GitHub-Api-Version": "2022-11-28"
     }
 
     res = requests.post(
