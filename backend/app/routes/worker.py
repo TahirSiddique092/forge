@@ -72,15 +72,9 @@ def update_status(run_id: int, payload: UpdateStatusPayload, x_worker_token: str
     db.commit()
     return {"message": "Updated successfully"}
 
-def get_project_id_from_token(token: str, db: Session):
-    hashed = hashlib.sha256(token.encode()).hexdigest()
-    worker_token = db.query(WorkerToken).filter(WorkerToken.token == hashed).first()
-    return worker_token.project_id if worker_token else None
-
-
 @router.post("/runs/{run_id}/steps")
-def create_step(run_id: int, payload: CreateStepPayload, x_worker_token: str = Header(...)):
-    project_id = get_project_id_from_token(x_worker_token)
+def create_step(run_id: int, payload: CreateStepPayload, x_worker_token: str = Header(...), db: Session = Depends(get_db)):
+    project_id = get_project_id_from_token(x_worker_token, db)
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
 
@@ -99,8 +93,8 @@ def create_step(run_id: int, payload: CreateStepPayload, x_worker_token: str = H
     return {"step_id": step_id}
 
 @router.patch("/runs/{run_id}/steps/{step_id}")
-def finish_step(run_id: int, step_id: int, payload: FinishStepPayload, x_worker_token: str = Header(...)):
-    project_id = get_project_id_from_token(x_worker_token)
+def finish_step(run_id: int, step_id: int, payload: FinishStepPayload, x_worker_token: str = Header(...), db: Session = Depends(get_db)):
+    project_id = get_project_id_from_token(x_worker_token, db)
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
 
