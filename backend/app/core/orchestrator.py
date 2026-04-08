@@ -2,9 +2,10 @@ from app.core.database import SessionLocal
 from app.models.project import Project
 from app.models.run import Run
 from app.models.credential import UserCredential
+from app.models.repo_binding import RepoBinding
 from app.utils.security import decrypt_token
 from app.integrations.render import trigger_render_deploy, get_render_service_url
-from app.integrations.vercel import trigger_vercel_deploy
+from app.integrations.vercel import trigger_vercel_deploy, ensure_vercel_project
 
 def start_deployment_sequence(project_db_id: int, run_id: int):
     db = SessionLocal()
@@ -16,6 +17,12 @@ def start_deployment_sequence(project_db_id: int, run_id: int):
 
         creds = db.query(UserCredential).filter(UserCredential.user_id == project.owner_id).all()
         cred_map = {c.provider: decrypt_token(c.encrypted_token) for c in creds}
+
+        # Resolve the linked repo for this project
+        binding = db.query(RepoBinding).filter(RepoBinding.project_id == project.project_id).first()
+        if not binding:
+            raise Exception("No repo linked to this project. Run `forge link` first.")
+        repo_full_name = binding.repo_full_name  # e.g. "TahirSiddique092/calculator-app"
 
         results = {}
         backend_urls = {}  # component name -> deployed URL
@@ -54,9 +61,12 @@ def start_deployment_sequence(project_db_id: int, run_id: int):
             if backend_url:
                 current_envs["NEXT_PUBLIC_API_URL"] = backend_url
 
+            # Create project in Vercel if it doesn't exist yet (safe to call on every deploy)
+            ensure_vercel_project(project.name, repo_full_name, cred_map["vercel"])
+
             deploy_data = trigger_vercel_deploy(
                 project_name=project.name,
-                repo_url=project.deployment_metadata.get("repo_url"),
+                repo_url=repo_full_name,
                 env_vars=current_envs,
                 token=cred_map["vercel"]
             )
