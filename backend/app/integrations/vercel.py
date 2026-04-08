@@ -1,6 +1,24 @@
+import re
 import requests
 
 VERCEL_API = "https://api.vercel.com"
+
+
+def sanitize_vercel_name(name: str) -> str:
+    """
+    Converts an arbitrary project name into a valid Vercel project name:
+    - Lowercase
+    - Spaces and underscores become hyphens
+    - Any character that isn't a letter, digit, '.', '_', or '-' is removed
+    - Collapse sequences of multiple hyphens into one
+    - Strip leading/trailing hyphens
+    """
+    name = name.lower()
+    name = name.replace(" ", "-").replace("_", "-")
+    name = re.sub(r"[^a-z0-9.\-]", "", name)
+    name = re.sub(r"-{2,}", "-", name)  # no '---' or '--'
+    name = name.strip("-")
+    return name
 
 
 def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
@@ -9,13 +27,15 @@ def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
     repo_full_name should be "owner/repo" format.
     Safe to call on every deploy — a 409 (already exists) is silently ignored.
     """
+    safe_name = sanitize_vercel_name(project_name)
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
     payload = {
-        "name": project_name,
+        "name": safe_name,
         "gitRepository": {
             "type": "github",
             "repo": repo_full_name,
@@ -30,7 +50,7 @@ def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
 
     if not response.ok:
         raise Exception(
-            f"Failed to create Vercel project '{project_name}' "
+            f"Failed to create Vercel project '{safe_name}' "
             f"({response.status_code}): {response.text}"
         )
 
@@ -40,6 +60,8 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
     Triggers a production deployment for an existing Vercel project.
     repo_url can be "owner/repo" or a full GitHub URL.
     """
+    safe_name = sanitize_vercel_name(project_name)
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -50,8 +72,8 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
     repo_full_url = f"https://github.com/{repo_url}" if not repo_url.startswith("http") else repo_url
 
     payload = {
-        "name": project_name,
-        "project": project_name,
+        "name": safe_name,
+        "project": safe_name,
         "target": "production",
         "gitSource": {
             "type": "github",
