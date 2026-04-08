@@ -55,6 +55,7 @@ def run_job(job, worker_token):
     workdir = tempfile.mkdtemp(prefix="forge-")
     
     try:
+        typer.echo(f"  Cloning {repo}...")
         step = start_step(run_id, "clone", worker_token)
         r = subprocess.run(
             ["git", "clone", f"https://github.com/{repo}.git", workdir],
@@ -64,9 +65,12 @@ def run_job(job, worker_token):
         )
         finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
         if r.returncode != 0:
+            typer.echo(f"  Clone failed.")
             report_status(run_id, job, False, worker_token)
-            return 
+            return
+        typer.echo(f"  Clone complete.")
 
+        typer.echo(f"  Checking out {commit[:7]}...")
         step = start_step(run_id, "checkout", worker_token)
         r = subprocess.run(
             ["git", "checkout", commit],
@@ -77,25 +81,26 @@ def run_job(job, worker_token):
         )
         finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
         if r.returncode != 0:
+            typer.echo(f"  Checkout failed.")
             report_status(run_id, job, False, worker_token)
-            return 
+            return
+        typer.echo(f"  Checkout complete.")
 
         spec = job.get("spec", {})
         components = spec.get("components", [])
         all_success = True
-        
+
         for component in components:
             name = component["name"]
             root_dir = component["root_dir"]
-            runtime = component.get("runtime")
-            version = component.get("runtime_version", "20" if runtime == "node" else "3.10")
-            image = f"{runtime}:{version}"
-           
+            image = get_docker_image(component)
+
             step_name = f"ci:{name}"
             step = start_step(run_id, step_name, worker_token)
-            
+
             cmd = f"cd {root_dir} && {build_command(component)}"
-            
+
+            typer.echo(f"  [{name}] Running install...")
             r = subprocess.run(
                 [
                     "docker", "run", "--rm",
@@ -109,19 +114,27 @@ def run_job(job, worker_token):
                 text=True,
                 timeout=300
             )
-            
-            finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
-            
-            if r.returncode != 0:
-                all_passed = False
-                break 
 
-        report_status(run_id, job, all_passed, worker_token)
+            status = "success" if r.returncode == 0 else "failed"
+            finish_step(step, run_id, status, worker_token, r.stdout, r.stderr)
+
+            if r.returncode != 0:
+                typer.echo(f"  [{name}] Install failed.")
+                all_success = False
+                break
+            typer.echo(f"  [{name}] Install complete.")
+
+        if all_success:
+            typer.echo(f"  All components passed.")
+        else:
+            typer.echo(f"  CI failed. Check the dashboard for logs.")
+        report_status(run_id, job, all_success, worker_token)
 
     except subprocess.TimeoutExpired:
+        typer.echo(f"  Step timed out after 300s.")
         report_status(run_id, job, False, worker_token)
     except Exception as e:
-        typer.echo(f"Job execution failed: {e}")
+        typer.echo(f"  Job execution failed: {e}")
         report_status(run_id, job, False, worker_token)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -151,11 +164,10 @@ def get_docker_image(component: dict):
 def build_command(component: dict):
     install = component.get("install_command", "")
     test = component.get("test_command")
-    build = component.get("build_command", "")
 
     if test:
         return f"{install} && {test}"
-    return f"{install} && {build}"
+    return install
 
 def report_status(run_id, job, success, worker_token):
     requests.patch(
