@@ -79,10 +79,28 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    
+    # Fetch Vercel project details to get the linked repoId
+    proj_resp = requests.get(f"{VERCEL_API}/v9/projects/{safe_name}", headers=headers)
+    if not proj_resp.ok:
+        raise Exception(f"Failed to fetch Vercel project details to retrieve repoId: {proj_resp.text}")
+    
+    proj_data = proj_resp.json()
+    repo_id = proj_data.get("link", {}).get("repoId")
+    
+    # Fallback to GitHub public API if repoId isn't on the Vercel project object
+    if not repo_id:
+        repo_parts = repo_url.replace("https://github.com/", "").split("/")[-2:]
+        if len(repo_parts) == 2:
+            owner, repo = repo_parts[0], repo_parts[1].replace(".git", "")
+            gh_resp = requests.get(f"https://api.github.com/repos/{owner}/{repo}")
+            if gh_resp.ok:
+                repo_id = gh_resp.json().get("id")
+
+    if not repo_id:
+        raise Exception("Vercel could not determine the GitHub repoId. Ensure the repository is correctly linked and the Vercel GitHub Integration is fully installed.")
 
     vercel_envs = [{"key": k, "value": v, "type": "plain"} for k, v in env_vars.items()]
-
-    repo_full_url = f"https://github.com/{repo_url}" if not repo_url.startswith("http") else repo_url
 
     payload = {
         "name": safe_name,
@@ -90,7 +108,7 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
         "target": "production",
         "gitSource": {
             "type": "github",
-            "repoUrl": repo_full_url,
+            "repoId": repo_id,
             "ref": "main",
         },
         "env": vercel_envs,
