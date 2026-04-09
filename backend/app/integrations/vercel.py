@@ -100,7 +100,7 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
     if not repo_id:
         raise Exception("Vercel could not determine the GitHub repoId. Ensure the repository is correctly linked and the Vercel GitHub Integration is fully installed.")
 
-    vercel_envs = [{"key": k, "value": v, "type": "plain"} for k, v in env_vars.items()]
+    vercel_envs = {str(k): str(v) for k, v in env_vars.items()}
 
     payload = {
         "name": safe_name,
