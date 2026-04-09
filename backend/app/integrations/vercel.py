@@ -68,7 +68,7 @@ def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
             f"({response.status_code}): {response.text}"
         )
 
-def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, token: str):
+def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, token: str, root_dir: str = None, build_command: str = None, install_command: str = None):
     """
     Triggers a production deployment for an existing Vercel project.
     repo_url can be "owner/repo" or a full GitHub URL.
@@ -112,7 +112,18 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
             "ref": "main",
         },
         "env": vercel_envs,
+        "projectSettings": {}
     }
+    
+    if root_dir:
+        payload["projectSettings"]["rootDirectory"] = root_dir
+    if build_command:
+        payload["projectSettings"]["buildCommand"] = build_command
+    if install_command:
+        payload["projectSettings"]["installCommand"] = install_command
+        
+    if not payload["projectSettings"]:
+        del payload["projectSettings"]
 
     response = requests.post(f"{VERCEL_API}/v13/deployments", headers=headers, json=payload)
 
@@ -134,4 +145,10 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
             f"Vercel deploy failed ({response.status_code}): {response.text}"
         )
 
-    return response.json()
+    res_json = response.json()
+    aliases = res_json.get("alias", [])
+    if aliases:
+        # Vercel provides project aliases, use the first one if available to show the nice domain
+        res_json["url"] = aliases[0]
+        
+    return res_json

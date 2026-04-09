@@ -23,7 +23,20 @@ def deploy():
     typer.echo(f"🚀 Initiating deployment for project {project_id}...")
 
     headers = {"Authorization": f"Bearer {token}"}
-    r = requests.post(f"{BACKEND_URL}/projects/{project_id}/deploy", headers=headers)
+    
+    dynamic_envs = {}
+    if os.path.exists(".env.forge"):
+        typer.echo("📦 Found .env.forge file. Parsing secure variables...")
+        with open(".env.forge", "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    dynamic_envs[k.strip()] = v.strip().strip("'").strip('"')
+
+    r = requests.post(f"{BACKEND_URL}/projects/{project_id}/deploy", headers=headers, json={"dynamic_envs": dynamic_envs})
 
     if r.status_code == 400:
         typer.echo(f"🛑 Error: {r.json().get('detail')}")

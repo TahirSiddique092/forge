@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from pydantic import BaseModel
+from typing import Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
@@ -17,6 +19,9 @@ from app.core.limiter import limiter
 from app.core.orchestrator import start_deployment_sequence
 
 router = APIRouter(prefix="/projects")
+
+class DeployPayload(BaseModel):
+    dynamic_envs: Optional[Dict[str, str]] = {}
 
 def get_db():
     db = SessionLocal()
@@ -261,6 +266,7 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current
 async def deploy_project(
     project_id: str, 
     background_tasks: BackgroundTasks,
+    payload: DeployPayload = None,
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -277,7 +283,8 @@ async def deploy_project(
     last_run.deploy_status = "initiated" 
     db.commit()
 
-    background_tasks.add_task(start_deployment_sequence, project.id, last_run.id)
+    envs = payload.dynamic_envs if payload and payload.dynamic_envs else {}
+    background_tasks.add_task(start_deployment_sequence, project.id, last_run.id, envs)
 
     return {
         "message": "🚀 Deployment initiated!",
