@@ -49,11 +49,24 @@ def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
         return
 
     if not response.ok:
+        try:
+            error_data = response.json()
+            err_dict = error_data.get("error", {})
+            if err_dict.get("code") == "bad_request" and "install the GitHub integration first" in err_dict.get("message", ""):
+                link = err_dict.get("link", "https://github.com/apps/vercel")
+                repo = err_dict.get("repo", repo_full_name)
+                raise Exception(
+                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at {link} "
+                    f"and grant it access to the repository '{repo_full_name}'. Then try deploying again."
+                )
+        except Exception as e:
+            if "Vercel GitHub Integration missing" in str(e):
+                raise e # Re-raise our beautifully formatted error
+        
         raise Exception(
             f"Failed to create Vercel project '{safe_name}' "
             f"({response.status_code}): {response.text}"
         )
-
 
 def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, token: str):
     """
@@ -86,6 +99,19 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
     response = requests.post(f"{VERCEL_API}/v13/deployments", headers=headers, json=payload)
 
     if not response.ok:
+        try:
+            error_data = response.json()
+            err_dict = error_data.get("error", {})
+            if err_dict.get("code") == "bad_request" and "install the GitHub integration first" in err_dict.get("message", ""):
+                link = err_dict.get("link", "https://github.com/apps/vercel")
+                raise Exception(
+                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at {link} "
+                    f"and grant it access to the repository '{repo_url}'. Then try deploying again."
+                )
+        except Exception as e:
+            if "Vercel GitHub Integration missing" in str(e):
+                raise e
+                
         raise Exception(
             f"Vercel deploy failed ({response.status_code}): {response.text}"
         )
