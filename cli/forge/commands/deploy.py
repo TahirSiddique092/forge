@@ -24,19 +24,31 @@ def deploy():
 
     headers = {"Authorization": f"Bearer {token}"}
     
-    dynamic_envs = {}
-    if os.path.exists(".env.forge"):
-        typer.echo("📦 Found .env.forge file. Parsing secure variables...")
-        with open(".env.forge", "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    dynamic_envs[k.strip()] = v.strip().strip("'").strip('"')
+    component_envs = {}
+    for root, dirs, files in os.walk("."):
+        if ".env.forge" in files:
+            if any(part.startswith('.') and part != '.' for part in root.split(os.sep)):
+                continue
+            
+            comp_name = os.path.basename(os.path.abspath(root))
+            if root == ".":
+                comp_name = "root"
+                
+            envs = {}
+            with open(os.path.join(root, ".env.forge"), "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        envs[k.strip()] = v.strip().strip("'").strip('"')
+            
+            if envs:
+                typer.echo(f"📦 Found .env.forge for component '{comp_name}'")
+                component_envs[comp_name] = envs
 
-    r = requests.post(f"{BACKEND_URL}/projects/{project_id}/deploy", headers=headers, json={"dynamic_envs": dynamic_envs})
+    r = requests.post(f"{BACKEND_URL}/projects/{project_id}/deploy", headers=headers, json={"component_envs": component_envs})
 
     if r.status_code == 400:
         typer.echo(f"🛑 Error: {r.json().get('detail')}")

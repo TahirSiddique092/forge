@@ -21,7 +21,7 @@ from app.core.orchestrator import start_deployment_sequence
 router = APIRouter(prefix="/projects")
 
 class DeployPayload(BaseModel):
-    dynamic_envs: Optional[Dict[str, str]] = {}
+    component_envs: Optional[Dict[str, Dict[str, str]]] = {}
 
 def get_db():
     db = SessionLocal()
@@ -283,7 +283,7 @@ async def deploy_project(
     last_run.deploy_status = "initiated" 
     db.commit()
 
-    envs = payload.dynamic_envs if payload and payload.dynamic_envs else {}
+    envs = payload.component_envs if payload and payload.component_envs else {}
     background_tasks.add_task(start_deployment_sequence, project.id, last_run.id, envs)
 
     return {

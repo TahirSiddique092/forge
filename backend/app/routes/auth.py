@@ -2,6 +2,8 @@ import os
 import secrets
 import requests
 from fastapi import APIRouter, HTTPException, Header, Request, Depends
+from fastapi.responses import HTMLResponse
+from app.core.queue import redis_client
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session as DBSession
 from app.core.database import SessionLocal
@@ -26,18 +28,20 @@ def get_db():
 
 @router.get("/github")
 @limiter.limit("10/minute")
-def github_login(request: Request):
+def github_login(request: Request, auth_code: str = None):
     url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
         f"&scope=read:user"
     )
+    if auth_code:
+        url += f"&state={auth_code}"
     return RedirectResponse(url)
 
 
 @router.get("/callback")
 @limiter.limit("10/minute")
-def github_callback(request: Request, code: str, db: Session = Depends(get_db)):
+def github_callback(request: Request, code: str, state: str = None, db: Session = Depends(get_db)):
     # 1. exchange code for github access token
     res = requests.post(
         "https://github.com/login/oauth/access_token",
@@ -79,12 +83,26 @@ def github_callback(request: Request, code: str, db: Session = Depends(get_db)):
     db.add(session)
     db.commit()
 
-    return {"session_token": session_token, "username": username}
+    if state:
+        redis_client.set(f"auth_code:{state}", session_token, ex=300)
 
-    # 5. redirect to frontend with token
-    # return RedirectResponse(
-    #     f"{FRONTEND_URL}/auth/callback?token={session_token}"
-    # )
+    html_content = """
+    <html>
+        <body>
+            <h2>Authentication successful!</h2>
+            <p>You can now close this tab and return to the CLI.</p>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+@router.get("/poll")
+def poll_auth(auth_code: str):
+    token = redis_client.get(f"auth_code:{auth_code}")
+    if token:
+        redis_client.delete(f"auth_code:{auth_code}")
+        return {"status": "success", "session_token": token}
+    return {"status": "pending"}
 
 
 @router.get("/me")

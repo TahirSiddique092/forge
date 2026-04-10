@@ -2,6 +2,7 @@ import typer
 import requests
 import os
 import time
+import webbrowser
 from forge.config import load_config
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
@@ -36,7 +37,13 @@ def deploy_status():
     if status == "success":
         typer.echo("🎉 DEPLOYMENT COMPLETE!")
         for name, info in components.items():
-            typer.echo(f"🔗 {name.capitalize()} URL: {info.get('url')}")
+            url = info.get('url')
+            typer.echo(f"🔗 {name.capitalize()} URL: {url}")
+            if url and "vercel.app" in url:
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
     elif "failed" in status:
         typer.echo(f"❌ Deployment Failed: {status}")
     else:

@@ -7,7 +7,7 @@ from app.utils.security import decrypt_token
 from app.integrations.render import trigger_render_deploy, get_render_service_url, ensure_render_service
 from app.integrations.vercel import trigger_vercel_deploy, ensure_vercel_project
 
-def start_deployment_sequence(project_db_id: int, run_id: int, dynamic_envs: dict = {}):
+def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: dict = {}):
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.id == project_db_id).first()
@@ -41,7 +41,7 @@ def start_deployment_sequence(project_db_id: int, run_id: int, dynamic_envs: dic
             db.commit()
 
             current_envs = component.get("env_vars", {}).copy()
-            current_envs.update(dynamic_envs)
+            current_envs.update(component_envs.get(component["name"], {}))
 
             service_id = ensure_render_service(
                 project_name=project.name,
@@ -71,9 +71,9 @@ def start_deployment_sequence(project_db_id: int, run_id: int, dynamic_envs: dic
             db.commit()
 
             current_envs = component.get("env_vars", {}).copy()
-            current_envs.update(dynamic_envs)
+            current_envs.update(component_envs.get(component["name"], {}))
             if backend_url:
-                current_envs["NEXT_PUBLIC_API_URL"] = backend_url
+                current_envs["BACKEND_URL"] = backend_url
 
             # Create project in Vercel if it doesn't exist yet (safe to call on every deploy)
             ensure_vercel_project(project.name, repo_full_name, cred_map["vercel"])
