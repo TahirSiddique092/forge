@@ -57,8 +57,17 @@ def run_job(job, worker_token):
     try:
         typer.echo(f"  Cloning {repo}...")
         step = start_step(run_id, "clone", worker_token)
+        
+        # Fetch installation token
+        token_res = requests.get(f"{BACKEND_URL}/worker/runs/{run_id}/token", headers={"x-worker-token": worker_token})
+        git_url = f"https://github.com/{repo}.git"
+        if token_res.status_code == 200:
+            install_token = token_res.json().get("token")
+            if install_token:
+                git_url = f"https://x-access-token:{install_token}@github.com/{repo}.git"
+
         r = subprocess.run(
-            ["git", "clone", f"https://github.com/{repo}.git", workdir],
+            ["git", "clone", git_url, workdir],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

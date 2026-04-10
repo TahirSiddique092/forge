@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.repo_binding import RepoBinding
 from app.models.project import Project
+from app.core.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter()
 
@@ -11,12 +13,18 @@ class RepoBindRequest(BaseModel):
     repo: str
     project_id: str
 
-@router.post("/repos/bind")
-def bind_repo(data: RepoBindRequest):
-    db: Session = SessionLocal()
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
+@router.post("/repos/bind")
+def bind_repo(data: RepoBindRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(
-        Project.project_id == data.project_id
+        Project.project_id == data.project_id,
+        Project.owner_id == current_user.id
     ).first()
 
     if not project:

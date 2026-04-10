@@ -1,6 +1,9 @@
+import os
 import asyncio
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.routes import projects as projects_router
@@ -15,13 +18,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.limiter import limiter
 from app.core.queue import redis_client
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 async def keep_redis_alive():
     while True:
         try:
             redis_client.ping()
-            print("Redis ping OK")
+            logger.info("Redis ping OK")
         except Exception as e:
-            print(f"Redis ping failed: {e}")
+            logger.error(f"Redis ping failed: {e}")
         await asyncio.sleep(60 * 60 * 24)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -32,21 +40,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         return response
 
-app = FastAPI(title="Forge Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    task = asyncio.create_task(keep_redis_alive())
+    yield
+    task.cancel()
+
+app = FastAPI(title="Forge Backend", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup():
-    Base.metadata.create_all(bind=engine)
-    asyncio.create_task(keep_redis_alive())
 
 app.include_router(auth_router.router)
 app.include_router(projects_router.router)

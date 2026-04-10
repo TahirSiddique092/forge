@@ -40,7 +40,11 @@ def get_next_job(
     if not job_data:
         return {"job": None}  
 
-    return {"job": json.loads(job_data)}
+    # Processing queue pattern: store in-flight job to allow reclamation
+    job_json = json.loads(job_data)
+    redis_client.set(f"job:processing:{job_json['run_id']}", job_data)
+
+    return {"job": job_json}
 
 def get_project_id_from_token(token: str, db: Session): 
     hashed = hashlib.sha256(token.encode()).hexdigest()
@@ -70,6 +74,10 @@ def update_status(run_id: int, payload: UpdateStatusPayload, x_worker_token: str
         {"status": status, "id": run_id}
     )
     db.commit()
+    
+    # Remove from processing registry
+    redis_client.delete(f"job:processing:{run_id}")
+    
     return {"message": "Updated successfully"}
 
 @router.post("/runs/{run_id}/steps")
@@ -78,7 +86,6 @@ def create_step(run_id: int, payload: CreateStepPayload, x_worker_token: str = H
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
 
-    db = SessionLocal()
     step_id = db.execute(
         text("""
             INSERT INTO run_steps (run_id, name, status, step_order)
@@ -98,7 +105,6 @@ def finish_step(run_id: int, step_id: int, payload: FinishStepPayload, x_worker_
     if not project_id:
         raise HTTPException(status_code=401, detail="Invalid worker token")
 
-    db = SessionLocal()
     db.execute(
         text("""
             UPDATE run_steps
@@ -109,3 +115,20 @@ def finish_step(run_id: int, step_id: int, payload: FinishStepPayload, x_worker_
     )
     db.commit()
     return {"message": "Step updated"}
+
+@router.get("/runs/{run_id}/token")
+def get_run_token(run_id: int, x_worker_token: str = Header(...), db: Session = Depends(get_db)):
+    project_id = get_project_id_from_token(x_worker_token, db)
+    if not project_id:
+        raise HTTPException(status_code=401, detail="Invalid worker token")
+    
+    from app.models.run import Run
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+        
+    try:
+        token = get_installation_token(run.installation_id)
+        return {"token": token}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

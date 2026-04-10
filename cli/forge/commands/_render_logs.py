@@ -25,7 +25,7 @@ def print_run_logs(run: dict):
     for idx, step in enumerate(steps, start=1):
         print(f"[{idx}] {step['name']}")
         print(f"Command:")
-        print(f"  {step['command']}")
+        print(f"  {step.get('command', '(unknown)')}")
         print("")
 
         if step.get("stdout"):

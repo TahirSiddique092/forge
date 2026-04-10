@@ -19,7 +19,11 @@ def status(
     ),
 ):
     cfg = load_config()
-    project_id = cfg["project_id"]
+    project_id = cfg.get("project_id")
+    if not project_id:
+        typer.echo("❌ Not linked to any project. Run `forge link`.")
+        raise typer.Exit(1)
+        
     repo = cfg.get("repo", "")
 
     # ---------------- URL SELECTION ----------------

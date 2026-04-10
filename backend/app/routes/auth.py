@@ -10,6 +10,7 @@ from app.core.database import SessionLocal
 from app.models.user import User
 from app.models.session import Session
 from app.core.limiter import limiter
+from datetime import datetime, timedelta, timezone
 
 
 
@@ -79,7 +80,8 @@ def github_callback(request: Request, code: str, state: str = None, db: Session 
 
     # 4. Create session token
     session_token = secrets.token_hex(32)
-    session = Session(token=session_token, user_id=user.id)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    session = Session(token=session_token, user_id=user.id, expires_at=expires_at)
     db.add(session)
     db.commit()
 

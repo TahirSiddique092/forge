@@ -2,6 +2,9 @@ import hmac
 import hashlib
 import os
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
@@ -96,6 +99,6 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
     })
 
 
-    print(f"🚀 CI run queued: run_id={run.id}")
+    logger.info(f"🚀 CI run queued: run_id={run.id}")
 
     return {"status": "queued"}

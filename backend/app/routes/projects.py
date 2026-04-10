@@ -119,7 +119,11 @@ def project_status(
 
 
 @router.get("/{project_id}/logs")
-def project_logs(project_id: str, db: Session = Depends(get_db)):
+def project_logs(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Unauthorized")
+
     run = (
         db.query(Run)
         .filter(Run.project_id == project_id)
@@ -149,11 +153,13 @@ def project_logs(project_id: str, db: Session = Depends(get_db)):
     }
 
 @router.post("/unlink")
-def unlink_repo(payload: dict):
-    db = SessionLocal()
-
+def unlink_repo(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project_id = payload["project_id"]
     repo = payload["repo"]
+
+    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Unauthorized")
 
     binding = db.query(RepoBinding).filter(
         RepoBinding.project_id == project_id,
@@ -275,10 +281,10 @@ async def deploy_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    last_run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
+    last_run = db.query(Run).filter(Run.project_id == project_id, Run.status == "success").order_by(Run.created_at.desc()).first()
 
-    if not last_run or last_run.status != "success":
-        raise HTTPException(status_code=400, detail="Latest build/test failed. Fix your code first!")
+    if not last_run:
+        raise HTTPException(status_code=400, detail="No successful builds found. Fix your code first!")
 
     last_run.deploy_status = "initiated" 
     db.commit()

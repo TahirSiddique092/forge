@@ -6,6 +6,7 @@ from app.models.repo_binding import RepoBinding
 from app.utils.security import decrypt_token
 from app.integrations.render import trigger_render_deploy, get_render_service_url, ensure_render_service
 from app.integrations.vercel import trigger_vercel_deploy, ensure_vercel_project
+from sqlalchemy.orm.attributes import flag_modified
 
 def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: dict = {}):
     db = SessionLocal()
@@ -41,7 +42,9 @@ def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: d
             db.commit()
 
             current_envs = component.get("env_vars", {}).copy()
-            current_envs.update(component_envs.get(component["name"], {}))
+            comp_dir = component.get("root_dir", "").strip("/")
+            env_vars = component_envs.get(comp_dir, {}) or component_envs.get(component.get("name", ""), {})
+            current_envs.update(env_vars)
 
             service_id = ensure_render_service(
                 project_name=project.name,
@@ -58,6 +61,10 @@ def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: d
             url = get_render_service_url(service_id, cred_map["render"])
             backend_urls[component["name"]] = url
             results[component["name"]] = {"url": url, "status": "deployed"}
+            
+            run.component_results = results
+            flag_modified(run, "component_results")
+            db.commit()
 
         # Use the first render URL as the general backend URL injected into frontends.
         backend_url = next(iter(backend_urls.values()), None)
@@ -71,7 +78,9 @@ def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: d
             db.commit()
 
             current_envs = component.get("env_vars", {}).copy()
-            current_envs.update(component_envs.get(component["name"], {}))
+            comp_dir = component.get("root_dir", "").strip("/")
+            env_vars = component_envs.get(comp_dir, {}) or component_envs.get(component.get("name", ""), {})
+            current_envs.update(env_vars)
             if backend_url:
                 current_envs["BACKEND_URL"] = backend_url
 
@@ -88,6 +97,10 @@ def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: d
                 install_command=component.get("install_command")
             )
             results[component["name"]] = {"url": deploy_data.get("url"), "status": "deployed"}
+            
+            run.component_results = results
+            flag_modified(run, "component_results")
+            db.commit()
 
         run.deploy_status = "success"
         run.component_results = results

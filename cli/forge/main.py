@@ -9,6 +9,7 @@ from forge.commands.login import login
 from forge.commands.deploy import deploy             
 from forge.commands.deploy_status import deploy_status 
 from forge.commands.credentials import set_credential
+from forge.commands.create import create
 
 app = typer.Typer(help="forge — spec-driven CI/CD for Hackathons")
 
@@ -21,6 +22,7 @@ app.command()(login)
 app.command(name="set-cred")(set_credential)
 app.command()(deploy)               
 app.command(name="deploy-status")(deploy_status) 
+app.command()(create) 
 
 app.add_typer(worker_app, name="worker")
 

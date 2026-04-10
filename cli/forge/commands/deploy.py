@@ -30,9 +30,9 @@ def deploy():
             if any(part.startswith('.') and part != '.' for part in root.split(os.sep)):
                 continue
             
-            comp_name = os.path.basename(os.path.abspath(root))
-            if root == ".":
-                comp_name = "root"
+            comp_name = os.path.normpath(root)
+            if comp_name == ".":
+                comp_name = ""
                 
             envs = {}
             with open(os.path.join(root, ".env.forge"), "r") as f:
