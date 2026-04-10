@@ -1,6 +1,6 @@
 import typer
 import requests
-from forge.config import load_config, save_config
+from forge.config import load_config, save_config, get_auth_headers
 import os
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
@@ -20,7 +20,8 @@ def unlink():
 
     requests.post(
         f"{BACKEND_URL}/projects/unlink",
-        json={"project_id": project_id, "repo": repo}
+        json={"project_id": project_id, "repo": repo},
+        headers=get_auth_headers()
     )
 
     cfg.pop("project_id", None)
