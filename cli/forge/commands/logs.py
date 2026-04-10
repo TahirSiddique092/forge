@@ -1,61 +1,100 @@
 import typer
 import requests
-from forge.config import load_config, get_auth_headers
 import os
+from forge.config import load_config, get_auth_headers
+from forge import ui
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
-def logs(
-    run: int | None = typer.Option(
-        None, "--run", "-r", help="Show Nth latest run logs (1 = latest)"
-    )
-):
-    cfg = load_config()
-    project_id = cfg.get("project_id")
 
-    if not project_id:
-        typer.echo("❌ Not linked to any project. Run `forge link`.")
+def logs(
+    run: int = typer.Option(
+        None,
+        "--run", "-r",
+        help="Index of the run to inspect (1 = latest, 2 = second latest, ...)",
+    ),
+):
+    """
+    Show step-by-step CI logs for a run.
+
+    Defaults to the most recent run. Use --run to target a specific run
+    by its position in the history (1 = latest).
+
+    \b
+    Examples:
+      forge logs
+      forge logs --run 2
+    """
+
+    try:
+        cfg = load_config()
+    except Exception:
+        ui.error("Not initialized. Run [bold]forge init[/bold] first.")
         raise typer.Exit(1)
 
-    if run:
-        url = f"{BACKEND_URL}/projects/{project_id}/runs/{run}/logs"
-    else:
-        url = f"{BACKEND_URL}/projects/{project_id}/logs"
+    project_id = cfg.get("project_id")
+    if not project_id:
+        ui.error("Not linked to any project. Run [bold]forge link[/bold] first.")
+        raise typer.Exit(1)
 
-    r = requests.get(url, headers=get_auth_headers())
+    url = (
+        f"{BACKEND_URL}/projects/{project_id}/runs/{run}/logs"
+        if run
+        else f"{BACKEND_URL}/projects/{project_id}/logs"
+    )
+
+    try:
+        r = requests.get(url, headers=get_auth_headers(), timeout=10)
+    except requests.RequestException as e:
+        ui.error(f"Request failed: {e}")
+        raise typer.Exit(1)
+
     if r.status_code != 200:
-        typer.echo("❌ Failed to fetch logs")
+        ui.error(f"Could not fetch logs ({r.status_code}).")
         raise typer.Exit(1)
 
     data = r.json()
 
-    typer.echo(f"\nProject  {project_id}")
-    typer.echo(f"Run      #{data.get('run_id', 'latest')}")
-    typer.echo(f"Status   {data.get('status', 'unknown')}")
-    typer.echo("-" * 60)
+    if data.get("status") == "no runs yet":
+        ui.warn("No CI runs found for this project.")
+        return
 
-    # 🔹 STEP-BASED LOGS (new runs)
-    if "steps" in data:
-        for step in data["steps"]:
-            typer.echo(f"\n▶ {step['name']}")
-            typer.echo(f"Status     {step['status']}")
+    # ── Header ───────────────────────────────────────────────────────────────
+    ui.blank()
+    ui.label("Project",  project_id)
+    ui.label("Run",      f"#{data.get('run_id', 'latest')}")
+    ui.label("Commit",   (data.get("commit") or "")[:7])
+    ui.label("Message",  data.get("message") or "(no message)")
+    ui.console.print(f"  [dim]{'Status':<14}[/dim]", end="")
+    ui.console.print(ui.status_badge(data.get("status", "")))
+    ui.label("Created",  _fmt(data.get("created_at", "")))
 
-            if step.get("duration"):
-                typer.echo(f"Duration   {step['duration']} ms")
+    steps = data.get("steps", [])
+    if not steps:
+        ui.blank()
+        ui.warn("No steps recorded for this run.")
+        return
 
-            if step.get("stdout"):
-                typer.echo("\n--- stdout ---")
-                typer.echo(step["stdout"].rstrip())
+    # ── Step summary table ────────────────────────────────────────────────────
+    ui.blank()
+    ui.console.rule("[dim]Steps[/dim]", style="dim")
+    ui.steps_table(steps)
 
-            if step.get("stderr"):
-                typer.echo("\n--- stderr ---")
-                typer.echo(step["stderr"].rstrip())
+    # ── Per-step output ───────────────────────────────────────────────────────
+    has_output = any(s.get("stdout") or s.get("stderr") for s in steps)
+    if has_output:
+        ui.console.rule("[dim]Output[/dim]", style="dim")
+        ui.render_step_logs(steps)
 
-    # 🔹 FLAT LOGS (legacy runs)
-    else:
-        typer.echo("\n--- stdout ---")
-        typer.echo((data.get("stdout") or "(empty)").rstrip())
+    ui.blank()
 
-        typer.echo("\n--- stderr ---")
-        typer.echo((data.get("stderr") or "(empty)").rstrip())
-    
+
+def _fmt(ts: str) -> str:
+    if not ts:
+        return "—"
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(ts)[:16]

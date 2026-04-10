@@ -1,11 +1,12 @@
 [project]
 name = "forge"
 version = "0.1.0"
-description = "Spec-driven CI CLI"
+description = "Spec-driven CI/CD CLI"
 requires-python = ">=3.9"
 dependencies = [
   "typer[all]",
-  "requests"
+  "requests",
+  "rich>=13.0.0",
 ]
 
 [project.scripts]

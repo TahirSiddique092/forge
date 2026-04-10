@@ -4,188 +4,243 @@ import requests
 import time
 import tempfile
 import shutil
-from forge.config import load_config
 import os
+from forge.config import load_config
+from forge import ui
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
-worker_app = typer.Typer()
+
+worker_app = typer.Typer(help="Manage the local CI worker process.")
+
 
 @worker_app.command("start")
 def worker():
     """
-    Run worker locally and poll for multi-component CI jobs.
+    Start the local CI worker and poll for incoming jobs.
+
+    The worker clones your repository, checks out the pushed commit,
+    runs each component's install and test commands inside Docker,
+    and reports results back to Forge.
+
+    Keep this process running whenever you expect to push code.
+    Docker Desktop must be running before starting the worker.
     """
-    cfg = load_config()
-    project_id = cfg.get("project_id")
+
+    try:
+        cfg = load_config()
+    except Exception:
+        ui.error("Not initialized. Run [bold]forge init[/bold] first.")
+        raise typer.Exit(1)
+
+    project_id   = cfg.get("project_id")
     worker_token = cfg.get("worker_token")
-    
+
     if not project_id or not worker_token:
-        typer.echo("Not linked to any project. Run `forge link` first.")
+        ui.error("Not linked to a project. Run [bold]forge link[/bold] first.")
         raise typer.Exit(1)
-    
-    r = subprocess.run(["docker", "info"], capture_output=True)
-    if r.returncode != 0:
-        typer.echo("Docker is not running. Please start Docker Desktop.")
+
+    # Verify Docker is available
+    docker_check = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+    )
+    if docker_check.returncode != 0:
+        ui.error("Docker is not running. Start Docker Desktop and try again.")
         raise typer.Exit(1)
-    
-    typer.echo(f"forge worker running ({project_id})")
-    typer.echo(f"Waiting for jobs...")
-    
+
+    ui.blank()
+    ui.success("Worker started.")
+    ui.label("Project",  project_id)
+    ui.label("Backend",  BACKEND_URL)
+    ui.blank()
+    ui.console.rule("[dim]Waiting for jobs[/dim]", style="dim")
+
     while True:
         try:
-            r = requests.get(f"{BACKEND_URL}/worker/next-job", headers={"x-worker-token": worker_token})
+            r = requests.get(
+                f"{BACKEND_URL}/worker/next-job",
+                headers={"x-worker-token": worker_token},
+                timeout=10,
+            )
             job = r.json().get("job")
-    
+
             if job:
-                typer.echo(f"Running CI for commit {job['commit'][:7]}")
-                run_job(job, worker_token) 
+                _run_job(job, worker_token)
             else:
                 time.sleep(3)
 
+        except KeyboardInterrupt:
+            ui.blank()
+            ui.info("Worker stopped.")
+            break
         except Exception as e:
-            typer.echo(f"Error: {e}")
+            ui.warn(f"Worker error: {e}")
             time.sleep(5)
 
-def run_job(job, worker_token):
+
+# ── Job runner ────────────────────────────────────────────────────────────────
+
+def _run_job(job: dict, worker_token: str) -> None:
     run_id = job["run_id"]
-    spec = job["spec"]
     commit = job["commit"]
-    repo = job["repo"]
-    
+    repo   = job["repo"]
+
+    ui.blank()
+    ui.console.rule(f"[dim]Run #{run_id}  —  {repo}  @  {commit[:7]}[/dim]", style="dim")
+
     workdir = tempfile.mkdtemp(prefix="forge-")
-    
+
     try:
-        typer.echo(f"  Cloning {repo}...")
-        step = start_step(run_id, "clone", worker_token)
-        
-        # Fetch installation token
-        token_res = requests.get(f"{BACKEND_URL}/worker/runs/{run_id}/token", headers={"x-worker-token": worker_token})
+        # ── Clone ────────────────────────────────────────────────────────────
+        ui.info(f"Cloning  [cyan]{repo}[/cyan]")
+        step = _start_step(run_id, "clone", worker_token)
+
         git_url = f"https://github.com/{repo}.git"
+        token_res = requests.get(
+            f"{BACKEND_URL}/worker/runs/{run_id}/token",
+            headers={"x-worker-token": worker_token},
+            timeout=10,
+        )
         if token_res.status_code == 200:
-            install_token = token_res.json().get("token")
-            if install_token:
-                git_url = f"https://x-access-token:{install_token}@github.com/{repo}.git"
+            install_tok = token_res.json().get("token")
+            if install_tok:
+                git_url = f"https://x-access-token:{install_tok}@github.com/{repo}.git"
 
         r = subprocess.run(
             ["git", "clone", git_url, workdir],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
-        if r.returncode != 0:
-            typer.echo(f"  Clone failed.")
-            report_status(run_id, job, False, worker_token)
-            return
-        typer.echo(f"  Clone complete.")
+        _finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
 
-        typer.echo(f"  Checking out {commit[:7]}...")
-        step = start_step(run_id, "checkout", worker_token)
+        if r.returncode != 0:
+            ui.error("Clone failed.")
+            _report_status(run_id, job, False, worker_token)
+            return
+
+        # ── Checkout ─────────────────────────────────────────────────────────
+        ui.info(f"Checking out  [cyan]{commit[:7]}[/cyan]")
+        step = _start_step(run_id, "checkout", worker_token)
+
         r = subprocess.run(
             ["git", "checkout", commit],
             cwd=workdir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
-        if r.returncode != 0:
-            typer.echo(f"  Checkout failed.")
-            report_status(run_id, job, False, worker_token)
-            return
-        typer.echo(f"  Checkout complete.")
+        _finish_step(step, run_id, "success" if r.returncode == 0 else "failed", worker_token, r.stdout, r.stderr)
 
-        spec = job.get("spec", {})
-        components = spec.get("components", [])
+        if r.returncode != 0:
+            ui.error("Checkout failed.")
+            _report_status(run_id, job, False, worker_token)
+            return
+
+        # ── Component CI ──────────────────────────────────────────────────────
+        components  = job.get("spec", {}).get("components", [])
         all_success = True
 
         for component in components:
-            name = component["name"]
+            name     = component["name"]
             root_dir = component["root_dir"]
-            image = get_docker_image(component)
+            image    = _docker_image(component)
+            cmd      = _ci_command(component)
 
-            step_name = f"ci:{name}"
-            step = start_step(run_id, step_name, worker_token)
+            ui.info(f"[{name}]  {image}  →  {cmd[:60]}")
+            step = _start_step(run_id, f"ci:{name}", worker_token)
 
-            cmd = f"cd {root_dir} && {build_command(component)}"
-
-            typer.echo(f"  [{name}] Running install...")
             r = subprocess.run(
                 [
                     "docker", "run", "--rm",
                     "-v", f"{workdir}:/app",
                     "-w", "/app",
                     image,
-                    "sh", "-c", cmd
+                    "sh", "-c", f"cd {root_dir} && {cmd}",
                 ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=300,
             )
 
-            status = "success" if r.returncode == 0 else "failed"
-            finish_step(step, run_id, status, worker_token, r.stdout, r.stderr)
+            step_status = "success" if r.returncode == 0 else "failed"
+            _finish_step(step, run_id, step_status, worker_token, r.stdout, r.stderr)
 
-            if r.returncode != 0:
-                typer.echo(f"  [{name}] Install failed.")
+            if r.returncode == 0:
+                ui.success(f"[{name}]  passed")
+            else:
+                ui.error(f"[{name}]  failed")
                 all_success = False
                 break
-            typer.echo(f"  [{name}] Install complete.")
 
+        # ── Final report ──────────────────────────────────────────────────────
         if all_success:
-            typer.echo(f"  All components passed.")
+            ui.success(f"Run #{run_id} passed — all components succeeded.")
         else:
-            typer.echo(f"  CI failed. Check the dashboard for logs.")
-        report_status(run_id, job, all_success, worker_token)
+            ui.error(f"Run #{run_id} failed — check [bold]forge logs[/bold] for details.")
+
+        _report_status(run_id, job, all_success, worker_token)
 
     except subprocess.TimeoutExpired:
-        typer.echo(f"  Step timed out after 300s.")
-        report_status(run_id, job, False, worker_token)
+        ui.error("Step timed out after 300 seconds.")
+        _report_status(run_id, job, False, worker_token)
+
     except Exception as e:
-        typer.echo(f"  Job execution failed: {e}")
-        report_status(run_id, job, False, worker_token)
+        ui.error(f"Job execution error: {e}")
+        _report_status(run_id, job, False, worker_token)
+
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+        ui.blank()
 
-def start_step(run_id, name, worker_token):
-    r = requests.post(f"{BACKEND_URL}/worker/runs/{run_id}/steps", json={"name": name}, headers={"x-worker-token": worker_token})
+
+# ── Worker API helpers ────────────────────────────────────────────────────────
+
+def _start_step(run_id: int, name: str, token: str) -> int:
+    r = requests.post(
+        f"{BACKEND_URL}/worker/runs/{run_id}/steps",
+        json={"name": name},
+        headers={"x-worker-token": token},
+        timeout=10,
+    )
     return r.json().get("step_id")
 
-def finish_step(step_id, run_id, status, worker_token, stdout="", stderr=""):
+
+def _finish_step(
+    step_id: int, run_id: int, status: str, token: str,
+    stdout: str = "", stderr: str = ""
+) -> None:
     requests.patch(
         f"{BACKEND_URL}/worker/runs/{run_id}/steps/{step_id}",
         json={"status": status, "stdout": stdout, "stderr": stderr},
-        headers={"x-worker-token": worker_token}
+        headers={"x-worker-token": token},
+        timeout=10,
     )
 
-def get_docker_image(component: dict):
-    runtime = component["runtime"]
-    version = component.get("runtime_version", "20" if runtime == "node" else "3.10")
 
-    if runtime == "node":
-        return f"node:{version}"
-    if runtime == "python":
-        return f"python:{version}"
-
-    raise Exception(f"Unsupported runtime: {runtime}")
-
-def build_command(component: dict):
-    install = component.get("install_command", "")
-    test = component.get("test_command")
-
-    if test:
-        return f"{install} && {test}"
-    return install
-
-def report_status(run_id, job, success, worker_token):
+def _report_status(run_id: int, job: dict, success: bool, token: str) -> None:
     requests.patch(
         f"{BACKEND_URL}/worker/runs/{run_id}/status",
         json={
-            "success": success,
-            "repo": job["repo"],
-            "check_run_id": job["check_run_id"],
-            "installation_id": job["installation_id"]
+            "success":         success,
+            "repo":            job["repo"],
+            "check_run_id":    job["check_run_id"],
+            "installation_id": job["installation_id"],
         },
-        headers={"x-worker-token": worker_token}
+        headers={"x-worker-token": token},
+        timeout=10,
     )
+
+
+def _docker_image(component: dict) -> str:
+    runtime = component["runtime"]
+    version = component.get(
+        "runtime_version",
+        "20" if runtime in ("node", "nodejs") else "3.10",
+    )
+    if runtime in ("node", "nodejs"):
+        return f"node:{version}"
+    if runtime == "python":
+        return f"python:{version}"
+    raise Exception(f"Unsupported runtime: {runtime}")
+
+
+def _ci_command(component: dict) -> str:
+    install = component.get("install_command", "")
+    test    = component.get("test_command")
+    return f"{install} && {test}" if test else install

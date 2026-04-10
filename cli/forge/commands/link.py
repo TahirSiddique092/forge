@@ -1,47 +1,63 @@
 import typer
 import requests
-from forge.config import load_config, save_config, get_auth_headers
 import os
+from forge.config import load_config, save_config, get_auth_headers
+from forge import ui
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
+
 def link(
-    project_id: str,
-    worker_token: str = typer.Option(..., "--worker-token", help="Worker token from dashboard")
+    project_id: str = typer.Argument(..., help="Project ID (proj_xxxxxxxx)"),
+    worker_token: str = typer.Option(
+        ...,
+        "--worker-token",
+        help="Worker token shown after [bold]forge create[/bold]",
+    ),
 ):
     """
-    Link this repository to a forge project
+    Link this git repository to a Forge project.
+
+    This tells Forge which project to associate with push events from this repo.
+    Run once per project after [bold]forge create[/bold].
     """
-    cfg = load_config()
+
+    try:
+        cfg = load_config()
+    except Exception:
+        ui.error("Not initialized. Run [bold]forge init[/bold] first.")
+        raise typer.Exit(1)
 
     repo = cfg.get("repo")
     if not repo:
-        typer.echo("Repo not initialized. Run `forge init` first.")
+        ui.error("Repository not detected. Run [bold]forge init[/bold] first.")
         raise typer.Exit(1)
 
-    # SUCCESSFUL CALL: One single request including the Authorization headers
     try:
+        headers = get_auth_headers()
+    except RuntimeError as e:
+        ui.error(str(e))
+        raise typer.Exit(1)
+
+    with ui.console.status("[dim]Linking repository...[/dim]", spinner="dots"):
         r = requests.post(
             f"{BACKEND_URL}/projects/link",
-            json={
-                "project_id": project_id,
-                "repo": repo
-            },
-            headers=get_auth_headers()
+            json={"project_id": project_id, "repo": repo},
+            headers=headers,
+            timeout=10,
         )
 
-        if r.status_code != 200:
-            typer.echo(f"❌ Failed to link project: {r.status_code} - {r.text}")
-            raise typer.Exit(1)
-
-        # Save project_id locally
-        cfg["project_id"] = project_id
-        cfg["worker_token"] = worker_token
-        save_config(cfg)
-
-        typer.echo("Repo linked successfully")
-        typer.echo(f"Project ID: {project_id}")
-        
-    except RuntimeError as e:
-        typer.echo(f"❌ Auth Error: {e}")
+    if r.status_code != 200:
+        ui.error(f"Failed to link project ({r.status_code}): {r.text}")
         raise typer.Exit(1)
+
+    cfg["project_id"]   = project_id
+    cfg["worker_token"] = worker_token
+    save_config(cfg)
+
+    ui.success("Repository linked.")
+    ui.blank()
+    ui.label("Project ID",  project_id)
+    ui.label("Repository",  repo)
+    ui.blank()
+    ui.info("Next: run [bold]forge worker start[/bold] in a separate terminal to begin processing CI jobs.")

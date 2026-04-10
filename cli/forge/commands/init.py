@@ -2,26 +2,34 @@ import typer
 import os
 import subprocess
 from forge.config import load_config, save_config
+from forge import ui
+
 
 def init():
+    """Initialize forge in the current git repository."""
+
     if not os.path.exists(".git"):
-        typer.echo("Not a git repository")
+        ui.error("Not a git repository. Run this command from your project root.")
         raise typer.Exit(1)
 
     try:
         repo = subprocess.check_output(
-            ["git", "remote", "get-url", "origin"]
+            ["git", "remote", "get-url", "origin"],
+            stderr=subprocess.DEVNULL,
         ).decode().strip()
-    except:
+    except Exception:
         repo = "unknown"
 
     try:
         config = load_config()
-    except:
+    except Exception:
         config = {}
 
     config["repo"] = repo
     save_config(config)
 
-    typer.echo("forge initialized")
-    typer.echo(f"Repo: {repo}")
+    ui.success("forge initialized")
+    ui.blank()
+    ui.label("Repository", repo)
+    ui.blank()
+    ui.info("Next: run [bold]forge login[/bold] to authenticate with GitHub.")

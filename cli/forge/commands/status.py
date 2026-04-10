@@ -1,32 +1,41 @@
 import typer
 import requests
-from datetime import datetime
-from forge.config import load_config, get_auth_headers
 import os
+from forge.config import load_config, get_auth_headers
+from forge import ui
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
-def fmt_time(ts: str):
-    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return dt.strftime("%Y-%m-%d %H:%M")
 
 def status(
-    all: bool = typer.Option(
-        False, "--all", help="Show all runs"
-    ),
-    limit: int | None = typer.Option(
-        None, "--limit", "-n", help="Show last N runs"
-    ),
+    all: bool = typer.Option(False, "--all", "-a", help="Show all runs"),
+    limit: int = typer.Option(None,  "--limit", "-n", help="Show last N runs"),
 ):
-    cfg = load_config()
+    """
+    Show CI run status for the current project.
+
+    By default shows the most recent run. Use --all or --limit to see more.
+
+    \b
+    Examples:
+      forge status
+      forge status --limit 10
+      forge status --all
+    """
+
+    try:
+        cfg = load_config()
+    except Exception:
+        ui.error("Not initialized. Run [bold]forge init[/bold] first.")
+        raise typer.Exit(1)
+
     project_id = cfg.get("project_id")
     if not project_id:
-        typer.echo("❌ Not linked to any project. Run `forge link`.")
+        ui.error("Not linked to any project. Run [bold]forge link[/bold] first.")
         raise typer.Exit(1)
-        
+
     repo = cfg.get("repo", "")
 
-    # ---------------- URL SELECTION ----------------
     if limit is not None:
         url = f"{BACKEND_URL}/projects/{project_id}/runs?limit={limit}"
     elif all:
@@ -34,62 +43,62 @@ def status(
     else:
         url = f"{BACKEND_URL}/projects/{project_id}/status"
 
-    r = requests.get(url, headers=get_auth_headers())
+    try:
+        r = requests.get(url, headers=get_auth_headers(), timeout=10)
+    except requests.RequestException as e:
+        ui.error(f"Request failed: {e}")
+        raise typer.Exit(1)
+
     if r.status_code != 200:
-        typer.echo("Error: unable to fetch project status")
+        ui.error(f"Could not fetch status ({r.status_code}).")
         raise typer.Exit(1)
 
     data = r.json()
 
-    # ---------------- HEADER ----------------
-    typer.echo("")
-    typer.echo(f"Project     {project_id}")
+    # ── Header ──────────────────────────────────────────────────────────────
+    ui.blank()
+    ui.label("Project",    project_id)
     if repo:
-        typer.echo(f"Repository  {repo}")
-    typer.echo("")
+        ui.label("Repository", repo)
+    ui.blank()
 
-    # ================= LAST RUN =================
+    # ── Single (latest) run ─────────────────────────────────────────────────
     if limit is None and not all:
         run = data.get("run")
         if not run:
-            typer.echo("No CI runs yet")
+            ui.warn("No CI runs found for this project.")
             return
 
-        message = run.get("message") or "(no commit message)"
-
-        typer.echo("Last Run")
-        typer.echo("-" * 60)
-        typer.echo(f"Commit      {run['commit'][:7]}   {message}")
-        typer.echo(f"Status      {run['status']}")
-        typer.echo(f"Created     {fmt_time(run['created_at'])}")
+        ui.console.rule("[dim]Last Run[/dim]", style="dim")
+        ui.label("Commit",  (run.get("commit") or "")[:7])
+        ui.label("Message", run.get("message") or "(no message)")
+        ui.label("Status",  "")
+        # Print badge inline after the status label
+        badge = ui.status_badge(run.get("status", ""))
+        ui.console.print(f"  {'':14}", end="")
+        ui.console.print(badge)
+        ui.label("Created", _fmt(run.get("created_at", "")))
+        ui.blank()
         return
 
-    # ================= MULTIPLE RUNS =================
+    # ── Multiple runs ────────────────────────────────────────────────────────
     runs = data.get("runs", [])
-
     if not runs:
-        typer.echo("No CI runs yet")
+        ui.warn("No CI runs found for this project.")
         return
 
-    title = (
-        "All Runs"
-        if all
-        else f"Recent Runs (last {len(runs)})"
-    )
+    title = "All Runs" if all else f"Last {len(runs)} Runs"
+    ui.console.rule(f"[dim]{title}[/dim]", style="dim")
+    ui.blank()
+    ui.runs_table(runs)
 
-    typer.echo(title)
-    typer.echo("-" * 60)
 
-    typer.echo(
-        f"{'Commit':8} {'Status':8} {'Message':28} Created"
-    )
-
-    for run in runs:
-        message = (run.get("message") or "(no message)")[:28]
-
-        typer.echo(
-            f"{run['commit'][:7]:8} "
-            f"{run['status']:8} "
-            f"{message:28} "
-            f"{fmt_time(run['created_at'])}"
-        )
+def _fmt(ts: str) -> str:
+    if not ts:
+        return "—"
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(ts)[:16]
