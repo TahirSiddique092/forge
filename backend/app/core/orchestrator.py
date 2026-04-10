@@ -83,6 +83,9 @@ def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: d
             current_envs.update(env_vars)
             if backend_url:
                 current_envs["BACKEND_URL"] = backend_url
+                current_envs["VITE_BACKEND_URL"] = backend_url
+                current_envs["NEXT_PUBLIC_BACKEND_URL"] = backend_url
+                current_envs["REACT_APP_BACKEND_URL"] = backend_url
 
             # Create project in Vercel if it doesn't exist yet (safe to call on every deploy)
             ensure_vercel_project(project.name, repo_full_name, cred_map["vercel"])
