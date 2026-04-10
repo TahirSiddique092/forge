@@ -51,7 +51,6 @@ def worker():
     ui.blank()
     ui.success("Worker started.")
     ui.label("Project",  project_id)
-    ui.label("Backend",  BACKEND_URL)
     ui.blank()
     ui.console.rule("[dim]Waiting for jobs[/dim]", style="dim")
 
@@ -241,6 +240,21 @@ def _docker_image(component: dict) -> str:
 
 
 def _ci_command(component: dict) -> str:
-    install = component.get("install_command", "")
-    test    = component.get("test_command")
-    return f"{install} && {test}" if test else install
+    install  = component.get("install_command", "")
+    test     = component.get("test_command")
+    build    = component.get("build_command")
+    platform = component.get("platform")
+
+    cmds = []
+    if install:
+        cmds.append(install)
+        
+    # Frontend applications (Vercel) compile statics and exit, proving the code builds.
+    # Backend scripts (Render) are infinite servers (e.g., uvicorn), so we skip them here.
+    if platform == "vercel" and build:
+        cmds.append(build)
+        
+    if test:
+        cmds.append(test)
+        
+    return " && ".join(cmds) if cmds else "echo 'No commands defined'"

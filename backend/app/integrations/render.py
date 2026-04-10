@@ -64,7 +64,8 @@ def ensure_render_service(project_name: str, component_name: str, repo_url: str,
             err_msg = create_resp.json()
             if "repo" in str(err_msg).lower() or "github" in str(err_msg).lower():
                 raise Exception(
-                    f"Render GitHub Integration missing or no access. Please install the Render GitHub App on your GitHub account "
+                    f"Render GitHub Integration missing or no access. Please install the Render GitHub App at "
+                    f"https://github.com/apps/render "
                     f"and grant it access to the repository '{repo_url}'. Then strictly try deploying again."
                 )
         except Exception as e:

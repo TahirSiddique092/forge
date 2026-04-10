@@ -90,9 +90,35 @@ def github_callback(request: Request, code: str, state: str = None, db: Session 
 
     html_content = """
     <html>
+        <head>
+            <style>
+                body {
+                    margin: 0;
+                    height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background-color: #f9f9f9;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    color: #333;
+                }
+                .container {
+                    text-align: center;
+                    background: white;
+                    padding: 50px 70px;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+                    border: 1px solid #eaeaea;
+                }
+                h2 { margin-top: 0; font-weight: 600; font-size: 22px; color: #111; margin-bottom: 12px; }
+                p { margin-bottom: 0; color: #666; font-size: 15px; }
+            </style>
+        </head>
         <body>
-            <h2>Authentication successful!</h2>
-            <p>You can now close this tab and return to the CLI.</p>
+            <div class="container">
+                <h2>You have successfully logged in</h2>
+                <p>You can now close this tab and return to your terminal.</p>
+            </div>
         </body>
     </html>
     """

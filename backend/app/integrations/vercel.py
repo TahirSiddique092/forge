@@ -56,7 +56,8 @@ def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
                 link = err_dict.get("link", "https://github.com/apps/vercel")
                 repo = err_dict.get("repo", repo_full_name)
                 raise Exception(
-                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at {link} "
+                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at "
+                    f"https://github.com/apps/vercel "
                     f"and grant it access to the repository '{repo_full_name}'. Then try deploying again."
                 )
         except Exception as e:
@@ -134,7 +135,8 @@ def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, toke
             if err_dict.get("code") == "bad_request" and "install the GitHub integration first" in err_dict.get("message", ""):
                 link = err_dict.get("link", "https://github.com/apps/vercel")
                 raise Exception(
-                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at {link} "
+                    f"Vercel GitHub Integration missing. Please install the Vercel GitHub App at "
+                    f"https://github.com/apps/vercel "
                     f"and grant it access to the repository '{repo_url}'. Then try deploying again."
                 )
         except Exception as e:
