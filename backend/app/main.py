@@ -42,13 +42,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from sqlalchemy import text
-    with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE sessions ADD COLUMN expires_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP + INTERVAL '30 days' NOT NULL;"))
-        except Exception:
-            pass
-
     Base.metadata.create_all(bind=engine)
     task = asyncio.create_task(keep_redis_alive())
     yield

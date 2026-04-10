@@ -1,6 +1,7 @@
 import typer
 import requests
 import os
+from rich.prompt import Prompt
 from forge.config import load_config, save_config
 from forge import ui
 
@@ -25,6 +26,55 @@ def create(name: str = typer.Argument(..., help="Project name")):
         ui.error("Not authenticated. Run [bold]forge login[/bold] first.")
         raise typer.Exit(1)
 
+    ui.blank()
+    ui.header("Backend Configuration (Render)")
+    backend_choice = Prompt.ask(
+        "Framework",
+        choices=["fastapi", "flask", "express", "custom"],
+        default="fastapi",
+        console=ui.console
+    )
+
+    if backend_choice == "fastapi":
+        b_runtime = "python"
+        b_install = "pip install -r requirements.txt"
+        b_build   = "uvicorn app.main:app --host 0.0.0.0 --port 10000"
+    elif backend_choice == "flask":
+        b_runtime = "python"
+        b_install = "pip install -r requirements.txt"
+        b_build   = "gunicorn app:app -b 0.0.0.0:10000"
+    elif backend_choice == "express":
+        b_runtime = "node"
+        b_install = "npm install"
+        b_build   = "npm start"
+    else:
+        b_runtime = Prompt.ask("  Runtime", choices=["python", "node"], default="python", console=ui.console)
+        b_install = Prompt.ask("  Install Command", default="pip install -r requirements.txt", console=ui.console)
+        b_build   = Prompt.ask("  Build/Start Command", console=ui.console)
+
+    b_root = Prompt.ask("Root directory", default="backend", console=ui.console)
+
+    ui.blank()
+    ui.header("Frontend Configuration (Vercel)")
+    frontend_choice = Prompt.ask(
+        "Framework",
+        choices=["nextjs", "vite", "custom"],
+        default="nextjs",
+        console=ui.console
+    )
+
+    if frontend_choice == "nextjs" or frontend_choice == "vite":
+        f_runtime = "node"
+        f_install = "npm install"
+        f_build   = "npm run build"
+    else:
+        f_runtime = Prompt.ask("  Runtime", choices=["node", "python"], default="node", console=ui.console)
+        f_install = Prompt.ask("  Install Command", default="npm install", console=ui.console)
+        f_build   = Prompt.ask("  Build Command", default="npm run build", console=ui.console)
+
+    f_root = Prompt.ask("Root directory", default="frontend", console=ui.console)
+    ui.blank()
+
     payload = {
         "name": name,
         "spec": {
@@ -32,20 +82,20 @@ def create(name: str = typer.Argument(..., help="Project name")):
                 {
                     "name": "backend",
                     "platform": "render",
-                    "root_dir": "backend",
-                    "runtime": "python",
-                    "install_command": "pip install -r requirements.txt",
-                    "build_command": "uvicorn app.main:app --host 0.0.0.0 --port 10000",
+                    "root_dir": b_root,
+                    "runtime": b_runtime,
+                    "install_command": b_install,
+                    "build_command": b_build,
                     "test_command": None,
                     "env_vars": {},
                 },
                 {
                     "name": "frontend",
                     "platform": "vercel",
-                    "root_dir": "frontend",
-                    "runtime": "node",
-                    "install_command": "npm install",
-                    "build_command": "npm run build",
+                    "root_dir": f_root,
+                    "runtime": f_runtime,
+                    "install_command": f_install,
+                    "build_command": f_build,
                     "test_command": None,
                     "env_vars": {},
                 },
