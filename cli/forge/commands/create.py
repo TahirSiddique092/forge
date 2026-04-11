@@ -12,7 +12,7 @@ def create(name: str = typer.Argument(..., help="Project name")):
     """
     Create a new Forge project and link this directory to it.
 
-    Creates a project with a standard backend (Render) and frontend (Vercel)
+    Creates a project with a standard backend (Railway) and frontend (Vercel)
     component spec. To use a custom spec, create the project via the dashboard.
     """
 
@@ -27,7 +27,7 @@ def create(name: str = typer.Argument(..., help="Project name")):
         raise typer.Exit(1)
 
     ui.blank()
-    ui.header("Backend Configuration (Render)")
+    ui.header("Backend Configuration (Railway)")
     backend_choice = Prompt.ask(
         "Framework",
         choices=["fastapi", "flask", "express", "custom"],
@@ -81,7 +81,7 @@ def create(name: str = typer.Argument(..., help="Project name")):
             "components": [
                 {
                     "name": "backend",
-                    "platform": "render",
+                    "platform": "railway",
                     "root_dir": b_root,
                     "runtime": b_runtime,
                     "install_command": b_install,
@@ -129,6 +129,6 @@ def create(name: str = typer.Argument(..., help="Project name")):
     ui.label("Worker token",  worker_tok)
     ui.blank()
     ui.info("Next steps:")
-    ui.console.print("    1. [bold]forge set-cred render[/bold]   — add your Render API key")
+    ui.console.print("    1. [bold]forge set-cred railway[/bold]   — add your Railway API key")
     ui.console.print("    2. [bold]forge set-cred vercel[/bold]   — add your Vercel token")
     ui.console.print("    3. [bold]forge link[/bold]              — link this repo to the project")

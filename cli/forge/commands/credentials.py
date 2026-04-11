@@ -6,13 +6,13 @@ from forge import ui
 
 BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
 
-_VALID_PROVIDERS = ["render", "vercel"]
+_VALID_PROVIDERS = ["railway", "vercel"]
 
 
 def set_credential(
     provider: str = typer.Argument(
         ...,
-        help="Hosting provider: render or vercel",
+        help="Hosting provider: railway or vercel",
     ),
     token: str = typer.Option(
         ...,
@@ -28,8 +28,8 @@ def set_credential(
     Run this once per provider before your first deployment.
 
     \b
-    Providers:
-      render   — Render.com API key
+    Valid options:
+      railway  — Railway API token
       vercel   — Vercel personal access token
     """
 

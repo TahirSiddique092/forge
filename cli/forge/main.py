@@ -21,7 +21,7 @@ Typical workflow:
   forge init                          Detect the git repo
   forge login                         Authenticate via GitHub
   forge create <name>                 Create a new project
-  forge set-cred render               Save Render API key
+  forge set-cred railway              Save Railway API token
   forge set-cred vercel               Save Vercel token
   forge link <project-id>             Link repo to project
   forge worker start                  Start the local CI worker

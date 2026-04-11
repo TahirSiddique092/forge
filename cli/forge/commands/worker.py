@@ -250,7 +250,7 @@ def _ci_command(component: dict) -> str:
         cmds.append(install)
         
     # Frontend applications (Vercel) compile statics and exit, proving the code builds.
-    # Backend scripts (Render) are infinite servers (e.g., uvicorn), so we skip them here.
+    # Backend scripts (Railway) are infinite servers (e.g., uvicorn), so we skip them here.
     if platform == "vercel" and build:
         cmds.append(build)
         

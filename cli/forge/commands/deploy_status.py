@@ -11,9 +11,8 @@ BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrende
 def deploy_status():
     """
     Show the current status of the most recent deployment.
-
-    Re-run this command to poll for updates — deployments can take
-    several minutes depending on your Render and Vercel configurations.
+    A full deployment across multiple components can take
+    several minutes depending on your Railway and Vercel configurations.
     """
 
     try:
@@ -87,7 +86,7 @@ def deploy_status():
         ui.blank()
         reason = raw_status.replace("failed: ", "").strip()
         ui.error(f"Deployment failed: {reason}")
-        ui.info("Check your Render / Vercel dashboard for detailed logs.")
+        ui.info("Check your Railway / Vercel dashboard for detailed logs.")
 
     else:
         ui.blank()

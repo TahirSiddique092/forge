@@ -98,25 +98,22 @@ def github_callback(request: Request, code: str, state: str = None, db: Session 
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    background-color: #f9f9f9;
+                    background-color: #1c1c1c;
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    color: #333;
+                    color: #e0e0e0;
                 }
-                .container {
+                .wrapper {
                     text-align: center;
-                    background: white;
-                    padding: 50px 70px;
-                    border-radius: 12px;
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-                    border: 1px solid #eaeaea;
                 }
-                h2 { margin-top: 0; font-weight: 600; font-size: 22px; color: #111; margin-bottom: 12px; }
-                p { margin-bottom: 0; color: #666; font-size: 15px; }
+                h1 { margin-top: 0; font-weight: 800; font-size: 42px; color: #2ecc71; margin-bottom: 16px; letter-spacing: -0.5px; }
+                h2 { margin-top: 0; font-weight: 500; font-size: 20px; color: #ffffff; margin-bottom: 8px; }
+                p { margin-bottom: 0; color: #999; font-size: 15px; }
             </style>
         </head>
         <body>
-            <div class="container">
-                <h2>You have successfully logged in</h2>
+            <div class="wrapper">
+                <h1>Forge</h1>
+                <h2>Authentication Successful</h2>
                 <p>You can now close this tab and return to your terminal.</p>
             </div>
         </body>

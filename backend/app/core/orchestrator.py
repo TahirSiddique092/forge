@@ -4,114 +4,153 @@ from app.models.run import Run
 from app.models.credential import UserCredential
 from app.models.repo_binding import RepoBinding
 from app.utils.security import decrypt_token
-from app.integrations.render import trigger_render_deploy, get_render_service_url, ensure_render_service
+from app.integrations.railway import deploy_to_railway
 from app.integrations.vercel import trigger_vercel_deploy, ensure_vercel_project
 from sqlalchemy.orm.attributes import flag_modified
+import logging
 
-def start_deployment_sequence(project_db_id: int, run_id: int, component_envs: dict = {}):
+logger = logging.getLogger(__name__)
+
+
+def start_deployment_sequence(
+    project_db_id: int,
+    run_id:        int,
+    component_envs: dict = {},
+):
     db = SessionLocal()
+    run = None
+
     try:
         project = db.query(Project).filter(Project.id == project_db_id).first()
-        run = db.query(Run).filter(Run.id == run_id).first()
+        run     = db.query(Run).filter(Run.id == run_id).first()
+
         if not project or not run:
+            logger.error(f"Deploy aborted: project or run not found (project_db_id={project_db_id}, run_id={run_id})")
             return
 
-        creds = db.query(UserCredential).filter(UserCredential.user_id == project.owner_id).all()
+        # Decrypt all credentials for this user
+        creds    = db.query(UserCredential).filter(UserCredential.user_id == project.owner_id).all()
         cred_map = {c.provider: decrypt_token(c.encrypted_token) for c in creds}
 
-        # Resolve the linked repo for this project
+        # Resolve repo binding
         binding = db.query(RepoBinding).filter(RepoBinding.project_id == project.project_id).first()
         if not binding:
             raise Exception("No repo linked to this project. Run `forge link` first.")
-        repo_full_name = binding.repo_full_name  # e.g. "TahirSiddique092/calculator-app"
 
-        results = {}
-        backend_urls = {}  # component name -> deployed URL
+        repo_full_name = binding.repo_full_name   # e.g. "owner/repo"
+        branch         = "main"
 
-        components = project.spec.get("components", [])
-        render_components = [c for c in components if c["platform"] == "render"]
-        vercel_components = [c for c in components if c["platform"] == "vercel"]
+        results      = {}
+        backend_urls = {}
 
-        # --- Pass 1: deploy all backends first ---
-        # This ensures backend URLs are available before any frontend deploys.
-        for component in render_components:
-            if "render" not in cred_map:
-                raise Exception("Missing Render credentials. Run `forge set-cred render`.")
+        components         = project.spec.get("components", [])
+        railway_components = [c for c in components if c["platform"] == "railway"]
+        vercel_components  = [c for c in components if c["platform"] == "vercel"]
 
-            run.deploy_status = f"deploying_backend ({component['name']})"
+        # ── Pass 1: deploy all backends to Railway ────────────────────────────
+        for component in railway_components:
+            if "railway" not in cred_map:
+                raise Exception(
+                    "Missing Railway credentials. Run `forge set-cred railway`."
+                )
+
+            name = component["name"]
+            run.deploy_status = f"deploying_backend ({name})"
             db.commit()
 
+            # Merge spec-level env vars with .env.forge overrides
             current_envs = component.get("env_vars", {}).copy()
-            comp_dir = component.get("root_dir", "").strip("/")
-            env_vars = component_envs.get(comp_dir, {}) or component_envs.get(component.get("name", ""), {})
-            current_envs.update(env_vars)
-
-            service_id = ensure_render_service(
-                project_name=project.name,
-                component_name=component["name"],
-                repo_url=repo_full_name,
-                runtime=component.get("runtime", "python"),
-                root_dir=component.get("root_dir"),
-                install_command=component.get("install_command"),
-                start_command=component.get("build_command"),
-                env_vars=current_envs,
-                api_key=cred_map["render"]
+            comp_dir     = component.get("root_dir", "").strip("/")
+            overrides    = (
+                component_envs.get(comp_dir)
+                or component_envs.get(name)
+                or {}
             )
-            trigger_render_deploy(service_id, cred_map["render"])
-            url = get_render_service_url(service_id, cred_map["render"])
-            backend_urls[component["name"]] = url
-            results[component["name"]] = {"url": url, "status": "deployed"}
-            
-            run.component_results = results
+            current_envs.update(overrides)
+
+            url = deploy_to_railway(
+                project_name   = project.name,
+                component_name = name,
+                repo_full_name = repo_full_name,
+                root_dir       = component.get("root_dir", ""),
+                branch         = branch,
+                start_command  = component.get("build_command"),
+                build_command  = component.get("install_command"),
+                env_vars       = current_envs,
+                api_key        = cred_map["railway"],
+            )
+
+            backend_urls[name] = url
+            results[name]      = {"url": url, "status": "deployed", "platform": "railway"}
+
+            run.component_results = dict(results)
             flag_modified(run, "component_results")
             db.commit()
 
-        # Use the first render URL as the general backend URL injected into frontends.
+            logger.info(f"[{name}] Railway deploy triggered — {url}")
+
+        # Use the first Railway URL as the BACKEND_URL injected into frontends
         backend_url = next(iter(backend_urls.values()), None)
 
-        # --- Pass 2: deploy all frontends, injecting the backend URL ---
+        # ── Pass 2: deploy all frontends to Vercel ────────────────────────────
         for component in vercel_components:
             if "vercel" not in cred_map:
-                raise Exception("Missing Vercel credentials. Run `forge set-cred vercel`.")
+                raise Exception(
+                    "Missing Vercel credentials. Run `forge set-cred vercel`."
+                )
 
-            run.deploy_status = f"deploying_frontend ({component['name']})"
+            name = component["name"]
+            run.deploy_status = f"deploying_frontend ({name})"
             db.commit()
 
             current_envs = component.get("env_vars", {}).copy()
-            comp_dir = component.get("root_dir", "").strip("/")
-            env_vars = component_envs.get(comp_dir, {}) or component_envs.get(component.get("name", ""), {})
-            current_envs.update(env_vars)
+            comp_dir     = component.get("root_dir", "").strip("/")
+            overrides    = (
+                component_envs.get(comp_dir)
+                or component_envs.get(name)
+                or {}
+            )
+            current_envs.update(overrides)
+
+            # Always inject the backend URL so frontends can reach the API
             if backend_url:
                 current_envs["BACKEND_URL"] = backend_url
-                current_envs["VITE_BACKEND_URL"] = backend_url
-                current_envs["NEXT_PUBLIC_BACKEND_URL"] = backend_url
-                current_envs["REACT_APP_BACKEND_URL"] = backend_url
 
-            # Create project in Vercel if it doesn't exist yet (safe to call on every deploy)
             ensure_vercel_project(project.name, repo_full_name, cred_map["vercel"])
 
             deploy_data = trigger_vercel_deploy(
-                project_name=project.name,
-                repo_url=repo_full_name,
-                env_vars=current_envs,
-                token=cred_map["vercel"],
-                root_dir=component.get("root_dir"),
-                build_command=component.get("build_command"),
-                install_command=component.get("install_command")
+                project_name    = project.name,
+                repo_url        = repo_full_name,
+                env_vars        = current_envs,
+                token           = cred_map["vercel"],
+                root_dir        = component.get("root_dir"),
+                build_command   = component.get("build_command"),
+                install_command = component.get("install_command"),
             )
-            results[component["name"]] = {"url": deploy_data.get("url"), "status": "deployed"}
-            
-            run.component_results = results
+
+            results[name] = {
+                "url":      deploy_data.get("url"),
+                "status":   "deployed",
+                "platform": "vercel",
+            }
+
+            run.component_results = dict(results)
             flag_modified(run, "component_results")
             db.commit()
 
-        run.deploy_status = "success"
-        run.component_results = results
+            logger.info(f"[{name}] Vercel deploy triggered — {deploy_data.get('url')}")
+
+        run.deploy_status    = "success"
+        run.component_results = dict(results)
         db.commit()
 
+        logger.info(f"Deployment complete for project {project.project_id}")
+
     except Exception as e:
+        logger.error(f"Deployment failed: {e}", exc_info=True)
         if run:
             run.deploy_status = f"failed: {str(e)}"
             db.commit()
+
     finally:
         db.close()
