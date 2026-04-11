@@ -60,6 +60,6 @@ def link(
     ui.label("Project ID",  project_id)
     ui.label("Repository",  repo)
     ui.blank()
-    ui.console.print(f"    [yellow]IMPORTANT:[/yellow] To enable automatic CI webhooks, you must install the Forge GitHub App:\n    👉 [underline blue]https://github.com/apps/forge/installations/new[/underline blue]")
+    ui.console.print(f"    [yellow]IMPORTANT:[/yellow] To enable automatic CI webhooks, you must install the Forge GitHub App:\n    👉 [underline blue]https://github.com/apps/forge-ci-cd/installations/new[/underline blue]")
     ui.blank()
     ui.info("Next: run [bold]forge worker start[/bold] in a separate terminal to begin processing CI jobs.")

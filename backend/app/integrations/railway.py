@@ -3,16 +3,13 @@ Railway deployment integration.
 
 Uses the Railway GraphQL API v2.
 Docs: https://docs.railway.app/reference/public-api
-
-All mutations are idempotent-safe:
-  - Projects are looked up by name before creation.
-  - Services are looked up by name within a project before creation.
-  - Domains are provisioned only if not already present.
 """
 
 import requests
 import re
-import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 RAILWAY_API = "https://backboard.railway.app/graphql/v2"
 
@@ -20,6 +17,12 @@ RAILWAY_API = "https://backboard.railway.app/graphql/v2"
 # ── Internal GQL helper ───────────────────────────────────────────────────────
 
 def _gql(api_key: str, query: str, variables: dict = None) -> dict:
+    """
+    Execute a Railway GraphQL query/mutation.
+
+    Raises a descriptive Exception on any failure, including Railway's
+    own error messages so the caller can surface them to the user.
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type":  "application/json",
@@ -29,12 +32,34 @@ def _gql(api_key: str, query: str, variables: dict = None) -> dict:
         payload["variables"] = variables
 
     resp = requests.post(RAILWAY_API, json=payload, headers=headers, timeout=30)
-    resp.raise_for_status()
 
-    body = resp.json()
+    # Always parse the body first — Railway returns error detail as JSON
+    # even on 4xx, so raise_for_status() alone loses the message.
+    try:
+        body = resp.json()
+    except Exception:
+        raise Exception(
+            f"Railway API returned non-JSON response "
+            f"(HTTP {resp.status_code}): {resp.text[:400]}"
+        )
+
+    # HTTP-level error — extract Railway's message before raising
+    if not resp.ok:
+        errors = body.get("errors") or []
+        if errors:
+            messages = [e.get("message", str(e)) for e in errors]
+            raise Exception(
+                f"Railway API error (HTTP {resp.status_code}): "
+                f"{'; '.join(messages)}"
+            )
+        raise Exception(
+            f"Railway API HTTP {resp.status_code}: {resp.text[:400]}"
+        )
+
+    # HTTP 200 but GraphQL-level errors
     if "errors" in body:
         messages = [e.get("message", str(e)) for e in body["errors"]]
-        raise Exception(f"Railway API error: {'; '.join(messages)}")
+        raise Exception(f"Railway GraphQL error: {'; '.join(messages)}")
 
     return body.get("data", {})
 
@@ -48,38 +73,11 @@ def sanitize_railway_name(name: str) -> str:
     return name.strip("-")[:32]
 
 
-# ── Account lookup ────────────────────────────────────────────────────────────
-
-def get_default_team_id(api_key: str) -> str | None:
-    """
-    Returns the personal workspace team ID, or None if the account
-    uses a personal project context (no team required for personal accounts).
-    """
-    data = _gql(api_key, """
-        query {
-            teams {
-                edges {
-                    node { id  name }
-                }
-            }
-        }
-    """)
-    edges = data.get("teams", {}).get("edges", [])
-    if edges:
-        return edges[0]["node"]["id"]
-    return None
-
-
 # ── Project ───────────────────────────────────────────────────────────────────
 
 def ensure_railway_project(project_name: str, api_key: str) -> str:
-    """
-    Returns the Railway project ID, creating it if it does not exist.
-    Projects are identified by name — safe to call on every deploy.
-    """
     safe_name = sanitize_railway_name(project_name)
 
-    # 1. Check if a project with this name already exists
     data = _gql(api_key, """
         query {
             projects {
@@ -89,11 +87,12 @@ def ensure_railway_project(project_name: str, api_key: str) -> str:
             }
         }
     """)
+
     for edge in data.get("projects", {}).get("edges", []):
         if edge["node"]["name"] == safe_name:
+            logger.info(f"Railway: found existing project '{safe_name}'")
             return edge["node"]["id"]
 
-    # 2. Create it
     data = _gql(api_key, """
         mutation projectCreate($input: ProjectCreateInput!) {
             projectCreate(input: $input) {
@@ -103,13 +102,14 @@ def ensure_railway_project(project_name: str, api_key: str) -> str:
         }
     """, {"input": {"name": safe_name}})
 
-    return data["projectCreate"]["id"]
+    project_id = data["projectCreate"]["id"]
+    logger.info(f"Railway: created project '{safe_name}' ({project_id})")
+    return project_id
 
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
 def get_production_environment_id(project_id: str, api_key: str) -> str:
-    """Returns the ID of the 'production' environment for a project."""
     data = _gql(api_key, """
         query projectEnvironments($id: String!) {
             project(id: $id) {
@@ -122,13 +122,11 @@ def get_production_environment_id(project_id: str, api_key: str) -> str:
         }
     """, {"id": project_id})
 
-    for edge in data["project"]["environments"]["edges"]:
-        node = edge["node"]
-        if node["name"].lower() == "production":
-            return node["id"]
-
-    # Fallback: return the first environment
     edges = data["project"]["environments"]["edges"]
+    for edge in edges:
+        if edge["node"]["name"].lower() == "production":
+            return edge["node"]["id"]
+
     if edges:
         return edges[0]["node"]["id"]
 
@@ -137,17 +135,9 @@ def get_production_environment_id(project_id: str, api_key: str) -> str:
 
 # ── Service ───────────────────────────────────────────────────────────────────
 
-def ensure_railway_service(
-    project_id:      str,
-    component_name:  str,
-    api_key:         str,
-) -> str:
-    """
-    Returns the Railway service ID for a component, creating it if needed.
-    """
+def ensure_railway_service(project_id: str, component_name: str, api_key: str) -> str:
     safe_name = sanitize_railway_name(component_name)
 
-    # 1. Check if service already exists in this project
     data = _gql(api_key, """
         query projectServices($id: String!) {
             project(id: $id) {
@@ -162,9 +152,9 @@ def ensure_railway_service(
 
     for edge in data["project"]["services"]["edges"]:
         if edge["node"]["name"] == safe_name:
+            logger.info(f"Railway: found existing service '{safe_name}'")
             return edge["node"]["id"]
 
-    # 2. Create the service (no source yet — source is set via GitHub connect)
     data = _gql(api_key, """
         mutation serviceCreate($input: ServiceCreateInput!) {
             serviceCreate(input: $input) {
@@ -174,36 +164,80 @@ def ensure_railway_service(
         }
     """, {"input": {"projectId": project_id, "name": safe_name}})
 
-    return data["serviceCreate"]["id"]
+    service_id = data["serviceCreate"]["id"]
+    logger.info(f"Railway: created service '{safe_name}' ({service_id})")
+    return service_id
 
 
 # ── GitHub source ─────────────────────────────────────────────────────────────
 
 def connect_service_to_github(
     service_id:     str,
-    repo_full_name: str,   # "owner/repo"
+    repo_full_name: str,
     root_dir:       str,
     branch:         str,
     api_key:        str,
 ) -> None:
     """
-    Connect a Railway service to a GitHub repository.
-    Safe to call repeatedly — Railway handles the idempotency.
+    Connect a Railway service to a GitHub repository via serviceUpdate.
+
+    Requires the Railway GitHub App to be installed and granted access
+    to the target repository before this will succeed:
+      https://github.com/apps/railway
     """
-    source_input = {
+    source: dict = {
         "repo":   repo_full_name,
         "branch": branch or "main",
     }
     if root_dir:
-        source_input["rootDirectory"] = root_dir.lstrip("/")
+        source["rootDirectory"] = root_dir.lstrip("/")
 
-    _gql(api_key, """
-        mutation serviceConnect($id: String!, $input: ServiceConnectInput!) {
-            serviceConnect(id: $id, input: $input) {
-                id
+    # Error message fragments Railway returns when GitHub is not connected
+    _GITHUB_HINTS = (
+        "could not find",
+        "repo not found",
+        "repository not found",
+        "not found",
+        "github",
+        "integration",
+        "access",
+        "permission",
+    )
+
+    try:
+        _gql(api_key, """
+            mutation serviceUpdate($id: String!, $input: ServiceUpdateInput!) {
+                serviceUpdate(id: $id, input: $input) {
+                    id
+                }
             }
-        }
-    """, {"id": service_id, "input": {"source": {"github": source_input}}})
+        """, {
+            "id": service_id,
+            "input": {
+                "source": {
+                    "github": source
+                }
+            }
+        })
+    except Exception as e:
+        err_lower = str(e).lower()
+        if any(hint in err_lower for hint in _GITHUB_HINTS):
+            raise Exception(
+                f"Railway GitHub Integration missing or repository not accessible.\n"
+                f"\n"
+                f"  1. Install the Railway GitHub App:\n"
+                f"     https://github.com/apps/railway\n"
+                f"\n"
+                f"  2. Grant it access to the repository: {repo_full_name}\n"
+                f"\n"
+                f"  3. Re-run `forge deploy` once the app is installed.\n"
+                f"\n"
+                f"  Original Railway error: {e}"
+            )
+        raise
+
+    logger.info(f"Railway: connected service {service_id} to {repo_full_name}")
+
 
 
 # ── Env vars ──────────────────────────────────────────────────────────────────
@@ -215,7 +249,6 @@ def set_service_env_vars(
     env_vars:       dict,
     api_key:        str,
 ) -> None:
-    """Upserts env vars for a service in a given environment."""
     if not env_vars:
         return
 
@@ -224,6 +257,7 @@ def set_service_env_vars(
         for k, v in env_vars.items()
     ]
 
+    # variableCollectionUpsert returns Boolean — no selection set.
     _gql(api_key, """
         mutation variableCollectionUpsert($input: VariableCollectionUpsertInput!) {
             variableCollectionUpsert(input: $input)
@@ -237,18 +271,19 @@ def set_service_env_vars(
         }
     })
 
+    logger.info(f"Railway: set {len(env_vars)} env vars on service {service_id}")
+
 
 # ── Build config ──────────────────────────────────────────────────────────────
 
 def set_service_build_config(
-    service_id:      str,
-    environment_id:  str,
-    start_command:   str | None,
-    build_command:   str | None,
-    api_key:         str,
+    service_id:     str,
+    environment_id: str,
+    start_command:  str | None,
+    build_command:  str | None,
+    api_key:        str,
 ) -> None:
-    """Sets the build and start commands on a service instance."""
-    settings = {}
+    settings: dict = {}
     if start_command:
         settings["startCommand"] = start_command
     if build_command:
@@ -257,6 +292,7 @@ def set_service_build_config(
     if not settings:
         return
 
+    # serviceInstanceUpdate returns Boolean — no selection set.
     _gql(api_key, """
         mutation serviceInstanceUpdate(
             $serviceId:     String!,
@@ -275,6 +311,8 @@ def set_service_build_config(
         "input":         settings,
     })
 
+    logger.info(f"Railway: updated build config on service {service_id}")
+
 
 # ── Domain ────────────────────────────────────────────────────────────────────
 
@@ -288,71 +326,72 @@ def ensure_service_domain(
     Returns the public domain for a service.
     Creates a Railway-generated domain if none exists yet.
     """
-    # 1. Check for existing domains
-    data = _gql(api_key, """
-        query serviceInstanceDomains(
-            $projectId:     String!,
-            $environmentId: String!,
-            $serviceId:     String!
-        ) {
-            serviceInstance(
-                projectId:     $projectId,
-                environmentId: $environmentId,
-                serviceId:     $serviceId
+    # serviceInstance domain query — no projectId needed.
+    try:
+        data = _gql(api_key, """
+            query serviceInstanceDomains(
+                $environmentId: String!,
+                $serviceId:     String!
             ) {
-                domains {
-                    serviceDomains { domain }
-                    customDomains  { domain }
+                serviceInstance(
+                    environmentId: $environmentId,
+                    serviceId:     $serviceId
+                ) {
+                    domains {
+                        serviceDomains { domain }
+                        customDomains  { domain }
+                    }
                 }
             }
-        }
-    """, {
-        "projectId":     project_id,
-        "environmentId": environment_id,
-        "serviceId":     service_id,
-    })
+        """, {
+            "environmentId": environment_id,
+            "serviceId":     service_id,
+        })
 
-    instance = data.get("serviceInstance") or {}
-    domains  = instance.get("domains") or {}
+        instance = data.get("serviceInstance") or {}
+        domains  = instance.get("domains") or {}
 
-    for d in domains.get("customDomains", []):
-        if d.get("domain"):
-            return f"https://{d['domain']}"
+        for d in domains.get("customDomains", []):
+            if d.get("domain"):
+                return f"https://{d['domain']}"
+        for d in domains.get("serviceDomains", []):
+            if d.get("domain"):
+                return f"https://{d['domain']}"
 
-    for d in domains.get("serviceDomains", []):
-        if d.get("domain"):
-            return f"https://{d['domain']}"
+    except Exception as e:
+        logger.warning(f"Railway: could not query existing domains: {e}")
 
-    # 2. Create a Railway-generated domain
+    # serviceDomainCreate takes a single ServiceDomainCreateInput object —
+    # not separate positional arguments.
     data = _gql(api_key, """
-        mutation serviceInstanceDomainCreate(
-            $environmentId: String!,
-            $serviceId:     String!
-        ) {
-            serviceDomainCreate(
-                environmentId: $environmentId,
-                serviceId:     $serviceId
-            ) {
+        mutation serviceDomainCreate($input: ServiceDomainCreateInput!) {
+            serviceDomainCreate(input: $input) {
                 domain
             }
         }
     """, {
-        "environmentId": environment_id,
-        "serviceId":     service_id,
+        "input": {
+            "environmentId": environment_id,
+            "serviceId":     service_id,
+        }
     })
 
-    domain = data.get("serviceDomainCreate", {}).get("domain")
-    return f"https://{domain}" if domain else None
+    domain = (data.get("serviceDomainCreate") or {}).get("domain")
+    if domain:
+        logger.info(f"Railway: provisioned domain {domain}")
+        return f"https://{domain}"
+
+    return None
 
 
-# ── Deploy ────────────────────────────────────────────────────────────────────
+# ── Deploy trigger ────────────────────────────────────────────────────────────
 
 def trigger_railway_deploy(
     environment_id: str,
     service_id:     str,
     api_key:        str,
 ) -> None:
-    """Triggers a redeployment of the latest source for a service."""
+    # serviceInstanceRedeploy returns Boolean — no selection set.
     _gql(api_key, """
         mutation serviceInstanceRedeploy(
             $environmentId: String!,
@@ -367,6 +406,8 @@ def trigger_railway_deploy(
         "environmentId": environment_id,
         "serviceId":     service_id,
     })
+
+    logger.info(f"Railway: triggered deploy for service {service_id}")
 
 
 # ── High-level entry point (called by orchestrator) ───────────────────────────
@@ -383,18 +424,23 @@ def deploy_to_railway(
     api_key:        str,
 ) -> str:
     """
-    Full deploy sequence for one backend component:
-      1. Ensure project exists
-      2. Ensure service exists
-      3. Connect to GitHub
-      4. Set env vars
-      5. Set build/start commands
-      6. Ensure public domain exists
-      7. Trigger deploy
-      8. Return the service URL
+    Full idempotent deploy sequence for one backend component.
 
-    Returns the public HTTPS URL of the deployed service.
+    Steps:
+      1. Ensure Railway project exists
+      2. Ensure service exists within that project
+      3. Connect service to GitHub repo
+      4. Set env vars
+      5. Set build / start commands
+      6. Provision a public domain if none exists
+      7. Trigger deploy
+      8. Return the public HTTPS URL
     """
+    logger.info(
+        f"Railway deploy: project='{project_name}' "
+        f"component='{component_name}' repo='{repo_full_name}'"
+    )
+
     project_id = ensure_railway_project(project_name, api_key)
     env_id     = get_production_environment_id(project_id, api_key)
     service_id = ensure_railway_service(project_id, component_name, api_key)
@@ -407,4 +453,5 @@ def deploy_to_railway(
 
     trigger_railway_deploy(env_id, service_id, api_key)
 
-    return url
+    logger.info(f"Railway deploy triggered — {url}")
+    return url or ""
