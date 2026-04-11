@@ -85,8 +85,31 @@ def deploy_status():
     elif "failed" in raw_status.lower():
         ui.blank()
         reason = raw_status.replace("failed: ", "").strip()
-        ui.error(f"Deployment failed: {reason}")
-        ui.info("Check your Railway / Vercel dashboard for detailed logs.")
+        
+        if "GITHUB_INTEGRATION_MISSING" in reason:
+            parts = reason.split("|")
+            provider_part = parts[0].split(":")[1].strip().lower()
+            repo = parts[1].strip() if len(parts) > 1 else "your repository"
+            
+            app_name = "Railway" if provider_part == "railway" else "Vercel"
+            app_url = f"https://github.com/apps/{provider_part}"
+
+            ui.error(f"Deployment failed: {app_name} cannot access your repository.")
+            ui.blank()
+            ui.rule("Action Required")
+            ui.blank()
+            ui.info(f"The {app_name} GitHub App is not installed or lacks permissions.")
+            ui.blank()
+            
+            ui.label("1. Install", app_url)
+            ui.label("2. Permission", f"Grant access to: {repo}")
+            ui.label("3. Retry", "Run [bold]forge deploy[/bold] again")
+            
+            ui.blank()
+            ui.rule()
+        else:
+            ui.error(f"Deployment failed: {reason}")
+            ui.info("Check your Railway / Vercel dashboard for detailed logs.")
 
     else:
         ui.blank()

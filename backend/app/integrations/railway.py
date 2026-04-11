@@ -62,22 +62,9 @@ def _gql(api_key: str, query: str, variables: dict = None) -> dict:
 
 
 def _check_github_integration(exc: Exception, repo: str) -> None:
-    """Converts Railway errors into actionable GitHub App installation messages."""
+    """Standardizes Railway GitHub errors for the CLI."""
     if any(h in str(exc).lower() for h in _GITHUB_INTEGRATION_HINTS):
-        # We raise a clean, formatted message for the terminal
-        raise Exception(
-            f"\n\n{'='*60}\n"
-            f"ACTION REQUIRED: RAILWAY GITHUB APP NOT INSTALLED\n"
-            f"{'='*60}\n"
-            f"Railway cannot access your repository: {repo}\n\n"
-            f"Please follow these steps:\n"
-            f"  1. Install the Railway GitHub App:\n"
-            f"     👉 https://github.com/apps/railway\n\n"
-            f"  2. Grant access to your repository: {repo}\n\n"
-            f"  3. Once granted, re-run your deployment command.\n"
-            f"{'='*60}\n"
-            f"Original error: {exc}\n"
-        )
+        raise Exception(f"GITHUB_INTEGRATION_MISSING: railway | {repo}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
