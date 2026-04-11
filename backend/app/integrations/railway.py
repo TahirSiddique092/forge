@@ -1,15 +1,6 @@
 """
 Railway deployment integration — GraphQL API v2.
 https://docs.railway.app/reference/public-api
-
-Schema notes (verified against Railway's public schema):
-  ServiceSourceInput      = { repo: String, image: String }
-                            FLAT — there is no source.github nesting.
-  ServiceInstanceUpdateInput includes buildCommand, startCommand,
-                            rootDirectory, and sourceBranch.
-  serviceCreate accepts source at creation time.
-  serviceInstanceRedeploy, serviceInstanceUpdate, variableCollectionUpsert
-                            all return Boolean — no selection set allowed.
 """
 
 import requests
@@ -20,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 RAILWAY_API = "https://backboard.railway.app/graphql/v2"
 
+# Detection hints for GitHub permissions/integration errors
 _GITHUB_INTEGRATION_HINTS = (
     "could not find",
     "repo not found",
@@ -30,17 +22,14 @@ _GITHUB_INTEGRATION_HINTS = (
     "access",
     "permission",
     "unauthorized",
+    "not accessible",
 )
 
 
 # ── GQL helper ────────────────────────────────────────────────────────────────
 
 def _gql(api_key: str, query: str, variables: dict = None) -> dict:
-    """
-    Execute a Railway GraphQL request.
-    Reads the response body before raising so Railway's actual error
-    message is always surfaced.
-    """
+    """Execute a Railway GraphQL request."""
     resp = requests.post(
         RAILWAY_API,
         json={"query": query, **({"variables": variables} if variables else {})},
@@ -73,15 +62,21 @@ def _gql(api_key: str, query: str, variables: dict = None) -> dict:
 
 
 def _check_github_integration(exc: Exception, repo: str) -> None:
-    """Converts a vague Railway error into an actionable GitHub App message."""
+    """Converts Railway errors into actionable GitHub App installation messages."""
     if any(h in str(exc).lower() for h in _GITHUB_INTEGRATION_HINTS):
+        # We raise a clean, formatted message for the terminal
         raise Exception(
-            f"Railway GitHub Integration missing or repo not accessible.\n\n"
+            f"\n\n{'='*60}\n"
+            f"ACTION REQUIRED: RAILWAY GITHUB APP NOT INSTALLED\n"
+            f"{'='*60}\n"
+            f"Railway cannot access your repository: {repo}\n\n"
+            f"Please follow these steps:\n"
             f"  1. Install the Railway GitHub App:\n"
-            f"     https://github.com/apps/railway\n\n"
-            f"  2. Grant access to: {repo}\n\n"
-            f"  3. Re-run `forge deploy`.\n\n"
-            f"  Original error: {exc}"
+            f"     👉 https://github.com/apps/railway\n\n"
+            f"  2. Grant access to your repository: {repo}\n\n"
+            f"  3. Once granted, re-run your deployment command.\n"
+            f"{'='*60}\n"
+            f"Original error: {exc}\n"
         )
 
 
@@ -144,13 +139,6 @@ def ensure_railway_service(
     repo_full_name: str,
     api_key:        str,
 ) -> str:
-    """
-    Return the service ID, creating the service if it doesn't exist.
-
-    ServiceSourceInput is FLAT: { repo: "owner/repo" }
-    There is no source.github nesting in Railway's schema.
-    rootDirectory and branch are set later via serviceInstanceUpdate.
-    """
     safe_name = sanitize_railway_name(component_name)
 
     data = _gql(api_key, """
@@ -176,7 +164,7 @@ def ensure_railway_service(
                 "projectId": project_id,
                 "name":      safe_name,
                 "source": {
-                    "repo": repo_full_name,   # FLAT — not source.github.repo
+                    "repo": repo_full_name,
                 },
             }
         })
@@ -190,8 +178,6 @@ def ensure_railway_service(
 
 
 # ── Env vars ──────────────────────────────────────────────────────────────────
-
-# app/integrations/railway.py
 
 def set_service_env_vars(
     project_id: str, environment_id: str, service_id: str,
@@ -211,7 +197,7 @@ def set_service_env_vars(
             "projectId":     project_id,
             "environmentId": environment_id,
             "serviceId":     service_id,
-            "variables":     variables_map,  # Corrected format
+            "variables":     variables_map,
         }
     })
     logger.info(f"Railway: set {len(env_vars)} env vars on {service_id}")
@@ -225,11 +211,6 @@ def set_service_build_config(
     root_dir: str | None, branch: str | None,
     api_key: str,
 ) -> None:
-    """
-    Configures startCommand, buildCommand, rootDirectory, and sourceBranch
-    on the service instance. All are optional — only set fields are sent.
-    Returns Boolean — no selection set.
-    """
     settings: dict = {}
     if start_command:
         settings["startCommand"]  = start_command
@@ -268,7 +249,6 @@ def set_service_build_config(
 def ensure_service_domain(
     project_id: str, environment_id: str, service_id: str, api_key: str,
 ) -> str | None:
-    # Check existing domains first
     try:
         data = _gql(api_key, """
             query($environmentId: String!, $serviceId: String!) {
@@ -292,7 +272,6 @@ def ensure_service_domain(
     except Exception as e:
         logger.warning(f"Railway: domain query failed (non-fatal): {e}")
 
-    # Provision a new Railway-generated domain
     data = _gql(api_key, """
         mutation serviceDomainCreate($input: ServiceDomainCreateInput!) {
             serviceDomainCreate(input: $input) { domain }
@@ -314,14 +293,18 @@ def ensure_service_domain(
 # ── Deploy trigger ────────────────────────────────────────────────────────────
 
 def trigger_railway_deploy(
-    environment_id: str, service_id: str, api_key: str,
+    environment_id: str, service_id: str, api_key: str, repo_full_name: str
 ) -> None:
-    # Returns Boolean — no selection set.
-    _gql(api_key, """
-        mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) {
-            serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId)
-        }
-    """, {"environmentId": environment_id, "serviceId": service_id})
+    try:
+        _gql(api_key, """
+            mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) {
+                serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId)
+            }
+        """, {"environmentId": environment_id, "serviceId": service_id})
+    except Exception as e:
+        # Catch failures here if Railway can't access the repo during deploy trigger
+        _check_github_integration(e, repo_full_name)
+        raise
     logger.info(f"Railway: deploy triggered for {service_id}")
 
 
@@ -338,16 +321,6 @@ def deploy_to_railway(
     env_vars:       dict,
     api_key:        str,
 ) -> str:
-    """
-    Idempotent full deploy sequence:
-      1. Ensure project
-      2. Ensure service (created with flat source.repo at first run)
-      3. Set env vars
-      4. Set build config, root dir, branch
-      5. Ensure public domain
-      6. Trigger deploy
-      7. Return URL
-    """
     logger.info(
         f"Railway deploy — project='{project_name}' "
         f"component='{component_name}' repo='{repo_full_name}'"
@@ -355,6 +328,8 @@ def deploy_to_railway(
 
     project_id = ensure_railway_project(project_name, api_key)
     env_id     = get_production_environment_id(project_id, api_key)
+    
+    # Check 1: Creating/connecting the service
     service_id = ensure_railway_service(
         project_id, component_name, repo_full_name, api_key
     )
@@ -368,7 +343,9 @@ def deploy_to_railway(
     )
 
     url = ensure_service_domain(project_id, env_id, service_id, api_key)
-    trigger_railway_deploy(env_id, service_id, api_key)
+    
+    # Check 2: Triggering the actual deployment
+    trigger_railway_deploy(env_id, service_id, api_key, repo_full_name)
 
     logger.info(f"Railway deploy triggered — {url}")
     return url or ""
