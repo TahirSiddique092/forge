@@ -191,13 +191,17 @@ def ensure_railway_service(
 
 # ── Env vars ──────────────────────────────────────────────────────────────────
 
+# app/integrations/railway.py
+
 def set_service_env_vars(
     project_id: str, environment_id: str, service_id: str,
     env_vars: dict, api_key: str,
 ) -> None:
     if not env_vars:
         return
-    # Returns Boolean — no selection set.
+    
+    variables_map = {k: str(v) for k, v in env_vars.items()}
+
     _gql(api_key, """
         mutation variableCollectionUpsert($input: VariableCollectionUpsertInput!) {
             variableCollectionUpsert(input: $input)
@@ -207,7 +211,7 @@ def set_service_env_vars(
             "projectId":     project_id,
             "environmentId": environment_id,
             "serviceId":     service_id,
-            "variables": [{"name": k, "value": str(v)} for k, v in env_vars.items()],
+            "variables":     variables_map,  # Corrected format
         }
     })
     logger.info(f"Railway: set {len(env_vars)} env vars on {service_id}")
