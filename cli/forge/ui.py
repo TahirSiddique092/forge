@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from rich import box
+from rich.panel import Panel
 
 console = Console(highlight=False)
 
@@ -167,3 +168,32 @@ def _fmt_time(ts: str) -> str:
         return dt.strftime("%Y-%m-%d %H:%M")
     except Exception:
         return str(ts)[:16]
+
+def render_deployment_progress(status: str, components: dict):
+    """
+    Generates a live-updatable panel showing the deployment phase 
+    and component table.
+    """
+    table = Table(box=None, padding=(0, 2))
+    table.add_column("Component", style="bold")
+    table.add_column("Status")
+    table.add_column("URL", style="dim")
+
+    for name, info in components.items():
+        # Use status badges you've already defined
+        badge = status_badge(info.get("status", "pending"))
+        table.add_row(name, badge, info.get("url", ""))
+
+    # Format the header based on the current phase
+    phase_text = f"Phase: [bold yellow]{status}[/bold yellow]"
+    if "success" in status:
+        phase_text = "Phase: [bold green]Success[/bold green]"
+    elif "failed" in status:
+        phase_text = "Phase: [bold red]Failed[/bold red]"
+
+    return Panel(
+        table,
+        title=phase_text,
+        title_align="left",
+        border_style="dim"
+    )
