@@ -88,38 +88,8 @@ def github_callback(request: Request, code: str, state: str = None, db: Session 
     if state:
         redis_client.set(f"auth_code:{state}", session_token, ex=300)
 
-    html_content = """
-    <html>
-        <head>
-            <style>
-                body {
-                    margin: 0;
-                    height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background-color: #1c1c1c;
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    color: #e0e0e0;
-                }
-                .wrapper {
-                    text-align: center;
-                }
-                h1 { margin-top: 0; font-weight: 800; font-size: 42px; color: #2ecc71; margin-bottom: 16px; letter-spacing: -0.5px; }
-                h2 { margin-top: 0; font-weight: 500; font-size: 20px; color: #ffffff; margin-bottom: 8px; }
-                p { margin-bottom: 0; color: #999; font-size: 15px; }
-            </style>
-        </head>
-        <body>
-            <div class="wrapper">
-                <h1>Forge</h1>
-                <h2>Authentication Successful</h2>
-                <p>You can now close this tab and return to your terminal.</p>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
+    # If it is a web frontend login, redirect to the frontend
+    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={session_token}")
 
 @router.get("/poll")
 def poll_auth(auth_code: str):
