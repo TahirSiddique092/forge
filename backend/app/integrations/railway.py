@@ -11,20 +11,6 @@ logger = logging.getLogger(__name__)
 
 RAILWAY_API = "https://backboard.railway.app/graphql/v2"
 
-# Detection hints for GitHub permissions/integration errors
-_GITHUB_INTEGRATION_HINTS = (
-    "could not find",
-    "repo not found",
-    "repository not found",
-    "not found",
-    "github",
-    "integration",
-    "access",
-    "permission",
-    "unauthorized",
-    "not accessible",
-)
-
 
 # ── GQL helper ────────────────────────────────────────────────────────────────
 
@@ -59,12 +45,6 @@ def _gql(api_key: str, query: str, variables: dict = None) -> dict:
         raise Exception(f"Railway GraphQL error: {'; '.join(msgs)}")
 
     return body.get("data", {})
-
-
-def _check_github_integration(exc: Exception, repo: str) -> None:
-    """Standardizes Railway GitHub errors for the CLI."""
-    if any(h in str(exc).lower() for h in _GITHUB_INTEGRATION_HINTS):
-        raise Exception(f"GITHUB_INTEGRATION_MISSING: railway | {repo}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -126,6 +106,17 @@ def ensure_railway_service(
     repo_full_name: str,
     api_key:        str,
 ) -> str:
+    """
+    Return the service ID, creating it with a GitHub source if it doesn't exist.
+
+    ServiceSourceInput is flat: { repo: "owner/repo" }
+    rootDirectory and branch are set later via serviceInstanceUpdate.
+
+    Any failure on serviceCreate when a repo source is provided is almost
+    certainly a GitHub App access issue — Railway returns the generic
+    "Problem processing request" (HTTP 400) for both schema errors and
+    missing GitHub integration, so we always surface the actionable message.
+    """
     safe_name = sanitize_railway_name(component_name)
 
     data = _gql(api_key, """
@@ -156,11 +147,16 @@ def ensure_railway_service(
             }
         })
     except Exception as e:
-        _check_github_integration(e, repo_full_name)
-        raise
+        # Railway returns the generic "Problem processing request" (HTTP 400)
+        # for BOTH schema errors and missing GitHub App access. Since the
+        # schema is correct, a 400 on serviceCreate with source.repo always
+        # means the GitHub App is not installed or lacks repo permissions.
+        raise Exception(
+            f"GITHUB_INTEGRATION_MISSING: railway | {repo_full_name}"
+        ) from e
 
     sid = data["serviceCreate"]["id"]
-    logger.info(f"Railway: created service '{safe_name}' → {sid} (repo={repo_full_name})")
+    logger.info(f"Railway: created service '{safe_name}' → {sid}")
     return sid
 
 
@@ -172,9 +168,9 @@ def set_service_env_vars(
 ) -> None:
     if not env_vars:
         return
-    
-    variables_map = {k: str(v) for k, v in env_vars.items()}
 
+    # VariableCollectionUpsertInput.variables is ServiceVariablesInput,
+    # which is a JSON scalar (plain dict of {key: value}) — not an array.
     _gql(api_key, """
         mutation variableCollectionUpsert($input: VariableCollectionUpsertInput!) {
             variableCollectionUpsert(input: $input)
@@ -184,7 +180,7 @@ def set_service_env_vars(
             "projectId":     project_id,
             "environmentId": environment_id,
             "serviceId":     service_id,
-            "variables":     variables_map,
+            "variables":     {k: str(v) for k, v in env_vars.items()},
         }
     })
     logger.info(f"Railway: set {len(env_vars)} env vars on {service_id}")
@@ -211,6 +207,7 @@ def set_service_build_config(
     if not settings:
         return
 
+    # serviceInstanceUpdate returns Boolean — no selection set.
     _gql(api_key, """
         mutation serviceInstanceUpdate(
             $serviceId:     String!,
@@ -259,6 +256,7 @@ def ensure_service_domain(
     except Exception as e:
         logger.warning(f"Railway: domain query failed (non-fatal): {e}")
 
+    # serviceDomainCreate returns Boolean — no selection set.
     data = _gql(api_key, """
         mutation serviceDomainCreate($input: ServiceDomainCreateInput!) {
             serviceDomainCreate(input: $input) { domain }
@@ -280,18 +278,25 @@ def ensure_service_domain(
 # ── Deploy trigger ────────────────────────────────────────────────────────────
 
 def trigger_railway_deploy(
-    environment_id: str, service_id: str, api_key: str, repo_full_name: str
+    environment_id: str, service_id: str,
+    api_key: str, repo_full_name: str,
 ) -> None:
     try:
+        # serviceInstanceRedeploy returns Boolean — no selection set.
         _gql(api_key, """
-            mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) {
-                serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId)
+            mutation serviceInstanceRedeploy(
+                $environmentId: String!, $serviceId: String!
+            ) {
+                serviceInstanceRedeploy(
+                    environmentId: $environmentId, serviceId: $serviceId
+                )
             }
         """, {"environmentId": environment_id, "serviceId": service_id})
     except Exception as e:
-        # Catch failures here if Railway can't access the repo during deploy trigger
-        _check_github_integration(e, repo_full_name)
-        raise
+        # Surface GitHub access issues at the deploy-trigger stage too
+        raise Exception(
+            f"GITHUB_INTEGRATION_MISSING: railway | {repo_full_name}"
+        ) from e
     logger.info(f"Railway: deploy triggered for {service_id}")
 
 
@@ -315,8 +320,6 @@ def deploy_to_railway(
 
     project_id = ensure_railway_project(project_name, api_key)
     env_id     = get_production_environment_id(project_id, api_key)
-    
-    # Check 1: Creating/connecting the service
     service_id = ensure_railway_service(
         project_id, component_name, repo_full_name, api_key
     )
@@ -330,8 +333,6 @@ def deploy_to_railway(
     )
 
     url = ensure_service_domain(project_id, env_id, service_id, api_key)
-    
-    # Check 2: Triggering the actual deployment
     trigger_railway_deploy(env_id, service_id, api_key, repo_full_name)
 
     logger.info(f"Railway deploy triggered — {url}")
