@@ -121,39 +121,28 @@ def upsert_vercel_env_vars(project_name: str, env_vars: dict, token: str) -> Non
 # ── Stable domain ─────────────────────────────────────────────────────────────
 
 def get_vercel_project_domain(project_name: str, token: str) -> str | None:
+    """
+    Fetches all domains linked to the project and returns the cleanest one.
+    """
     safe_name = sanitize_vercel_name(project_name)
     headers = {"Authorization": f"Bearer {token}"}
 
     resp = requests.get(
-        f"{VERCEL_API}/v9/projects/{safe_name}",
+        f"{VERCEL_API}/v9/projects/{safe_name}/domains",
         headers=headers,
     )
+    
     if not resp.ok:
-        logger.warning(f"Vercel: could not fetch project domain ({resp.status_code})")
-        return f"https://{safe_name}.vercel.app" # Fallback to default
-
-    data = resp.json()
-    
-    targets = data.get("targets", {}).get("production", {})
-    aliases = targets.get("alias", [])
-    
-    if not aliases:
-        aliases = data.get("alias", [])
-
-    if not aliases:
+        logger.warning(f"Vercel: could not fetch domains list ({resp.status_code})")
         return f"https://{safe_name}.vercel.app"
 
-    domains = []
-    for a in aliases:
-        if isinstance(a, str):
-            domains.append(a)
-        elif isinstance(a, dict) and a.get("domain"):
-            domains.append(a["domain"])
-
-    if not domains:
+    domains_data = resp.json().get("domains", [])
+    if not domains_data:
         return f"https://{safe_name}.vercel.app"
 
-    stable = min(domains, key=len)
+    urls = [d["name"] for d in domains_data if d.get("name")]
+    
+    stable = min(urls, key=len)
     return f"https://{stable}"
 
 
