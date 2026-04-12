@@ -121,14 +121,6 @@ def upsert_vercel_env_vars(project_name: str, env_vars: dict, token: str) -> Non
 # ── Stable domain ─────────────────────────────────────────────────────────────
 
 def get_vercel_project_domain(project_name: str, token: str) -> str | None:
-    """
-    Returns the stable production domain for a Vercel project.
-
-    The deployment URL returned from POST /v13/deployments is a one-time
-    URL tied to that specific build (e.g. project-abc123-user.vercel.app).
-    The stable project domain (e.g. project.vercel.app) comes from the
-    project's alias list, which persists across all deployments.
-    """
     safe_name = sanitize_vercel_name(project_name)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -138,15 +130,28 @@ def get_vercel_project_domain(project_name: str, token: str) -> str | None:
     )
     if not resp.ok:
         logger.warning(f"Vercel: could not fetch project domain ({resp.status_code})")
-        return None
+        return f"https://{safe_name}.vercel.app" # Fallback to default
 
-    aliases = resp.json().get("alias", [])
+    data = resp.json()
+    
+    targets = data.get("targets", {}).get("production", {})
+    aliases = targets.get("alias", [])
+    
     if not aliases:
-        return None
+        aliases = data.get("alias", [])
 
-    domains = [a["domain"] for a in aliases if a.get("domain")]
+    if not aliases:
+        return f"https://{safe_name}.vercel.app"
+
+    domains = []
+    for a in aliases:
+        if isinstance(a, str):
+            domains.append(a)
+        elif isinstance(a, dict) and a.get("domain"):
+            domains.append(a["domain"])
+
     if not domains:
-        return None
+        return f"https://{safe_name}.vercel.app"
 
     stable = min(domains, key=len)
     return f"https://{stable}"

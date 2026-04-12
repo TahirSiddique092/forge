@@ -112,9 +112,11 @@ def start_deployment_sequence(
             )
             current_envs.update(overrides)
 
-            # Always inject the backend URL so frontends can reach the API
             if backend_url:
                 current_envs["BACKEND_URL"] = backend_url
+                current_envs["VITE_BACKEND_URL"] = backend_url
+                current_envs["NEXT_PUBLIC_API_URL"] = backend_url
+                current_envs["REACT_APP_BACKEND_URL"] = backend_url
 
             ensure_vercel_project(project.name, repo_full_name, cred_map["vercel"])
 
