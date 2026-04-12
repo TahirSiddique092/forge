@@ -1,13 +1,29 @@
 [project]
-name = "forge"
+name = "forge-cicd"
 version = "0.1.0"
-description = "Spec-driven CI/CD CLI"
+description = "Forge — spec-driven CI/CD for full-stack projects."
+readme = "README.md"
 requires-python = ">=3.9"
+authors = [
+  { name = "Tahir Siddique", email = "tahir@example.com" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Build Tools",
+  "Environment :: Console",
+]
 dependencies = [
   "typer[all]",
   "requests",
   "rich>=13.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/TahirSiddique092/forge"
+Repository = "https://github.com/TahirSiddique092/forge"
+Issues = "https://github.com/TahirSiddique092/forge/issues"
 
 [project.scripts]
 forge = "forge.main:app"
