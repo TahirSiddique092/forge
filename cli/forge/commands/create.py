@@ -38,19 +38,22 @@ def create(name: str = typer.Argument(..., help="Project name")):
     if backend_choice == "fastapi":
         b_runtime = "python"
         b_install = "pip install -r requirements.txt"
-        b_build   = "uvicorn app.main:app --host 0.0.0.0 --port 10000"
+        b_build   = "uvicorn app.main:app --host 0.0.0.0 --port $PORT" 
+        
     elif backend_choice == "flask":
         b_runtime = "python"
         b_install = "pip install -r requirements.txt"
-        b_build   = "gunicorn app:app -b 0.0.0.0:10000"
+        b_build   = "gunicorn app:app -b 0.0.0.0:$PORT" 
+        
     elif backend_choice == "express":
         b_runtime = "node"
         b_install = "npm install"
-        b_build   = "npm start"
+        b_build   = "npm start" 
     else:
         b_runtime = Prompt.ask("  Runtime", choices=["python", "node"], default="python", console=ui.console)
         b_install = Prompt.ask("  Install Command", default="pip install -r requirements.txt", console=ui.console)
-        b_build   = Prompt.ask("  Build/Start Command", console=ui.console)
+        b_build   = Prompt.ask("  Build/Start Command", default="uvicorn app.main:app --host 0.0.0.0 --port $PORT", console=ui.console)
+
 
     b_root = Prompt.ask("Root directory", default="backend", console=ui.console)
 

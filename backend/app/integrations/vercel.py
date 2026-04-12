@@ -1,142 +1,258 @@
 import re
+import logging
 import requests
+
+logger = logging.getLogger(__name__)
 
 VERCEL_API = "https://api.vercel.com"
 
 
 def sanitize_vercel_name(name: str) -> str:
-    """
-    Converts an arbitrary project name into a valid Vercel project name:
-    - Lowercase
-    - Spaces and underscores become hyphens
-    - Any character that isn't a letter, digit, '.', '_', or '-' is removed
-    - Collapse sequences of multiple hyphens into one
-    - Strip leading/trailing hyphens
-    """
     name = name.lower()
     name = name.replace(" ", "-").replace("_", "-")
     name = re.sub(r"[^a-z0-9.\-]", "", name)
-    name = re.sub(r"-{2,}", "-", name)  # no '---' or '--'
-    name = name.strip("-")
-    return name
+    name = re.sub(r"-{2,}", "-", name)
+    return name.strip("-")
 
 
-def ensure_vercel_project(project_name: str, repo_full_name: str, token: str):
+# ── Project ───────────────────────────────────────────────────────────────────
+
+def ensure_vercel_project(project_name: str, repo_full_name: str, token: str) -> None:
     """
     Creates the Vercel project if it doesn't already exist.
-    repo_full_name should be "owner/repo" format.
-    Safe to call on every deploy — a 409 (already exists) is silently ignored.
+    Safe to call on every deploy — 409 is silently ignored.
     """
     safe_name = sanitize_vercel_name(project_name)
-
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
+        "Content-Type":  "application/json",
     }
 
-    payload = {
-        "name": safe_name,
-        "gitRepository": {
-            "type": "github",
-            "repo": repo_full_name,
+    response = requests.post(
+        f"{VERCEL_API}/v9/projects",
+        headers=headers,
+        json={
+            "name": safe_name,
+            "gitRepository": {"type": "github", "repo": repo_full_name},
         },
-    }
-
-    response = requests.post(f"{VERCEL_API}/v9/projects", headers=headers, json=payload)
+    )
 
     if response.status_code == 409:
-        # Project already exists — that's fine
         return
 
     if not response.ok:
         try:
-            error_data = response.json()
-            err_dict = error_data.get("error", {})
-            if err_dict.get("code") == "bad_request" and "install the GitHub integration first" in err_dict.get("message", ""):
-                raise Exception(f"GITHUB_INTEGRATION_MISSING: vercel | {repo_full_name}")
+            err = response.json().get("error", {})
+            if "install the GitHub integration first" in err.get("message", ""):
+                raise Exception(
+                    f"GITHUB_INTEGRATION_MISSING: vercel | {repo_full_name}"
+                )
         except Exception as e:
             if "GITHUB_INTEGRATION_MISSING" in str(e):
-                raise e
-        
+                raise
         raise Exception(f"Vercel project creation failed: {response.text}")
 
-def trigger_vercel_deploy(project_name: str, repo_url: str, env_vars: dict, token: str, root_dir: str = None, build_command: str = None, install_command: str = None):
-    """
-    Triggers a production deployment for an existing Vercel project.
-    repo_url can be "owner/repo" or a full GitHub URL.
-    """
-    safe_name = sanitize_vercel_name(project_name)
 
+# ── Env vars (project-level) ──────────────────────────────────────────────────
+
+def upsert_vercel_env_vars(project_name: str, env_vars: dict, token: str) -> None:
+    """
+    Upsert environment variables at the Vercel project level for production.
+
+    Must be called BEFORE triggering the deployment so the build process
+    picks them up. Passing env vars only in the deployment payload is
+    unreliable — they are single-deployment overrides, not project settings.
+
+    Uses PATCH to update existing keys and POST to create new ones,
+    avoiding duplicate key errors.
+    """
+    if not env_vars:
+        return
+
+    safe_name = sanitize_vercel_name(project_name)
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
+        "Content-Type":  "application/json",
     }
-    
-    # Fetch Vercel project details to get the linked repoId
-    proj_resp = requests.get(f"{VERCEL_API}/v9/projects/{safe_name}", headers=headers)
+
+    existing: dict[str, str] = {}
+    resp = requests.get(
+        f"{VERCEL_API}/v9/projects/{safe_name}/env",
+        headers=headers,
+    )
+    if resp.ok:
+        for env in resp.json().get("envs", []):
+            # Only track production-targeted vars
+            if "production" in env.get("target", []):
+                existing[env["key"]] = env["id"]
+
+    for key, value in env_vars.items():
+        if key in existing:
+            r = requests.patch(
+                f"{VERCEL_API}/v9/projects/{safe_name}/env/{existing[key]}",
+                headers=headers,
+                json={
+                    "value":  str(value),
+                    "type":   "plain",
+                    "target": ["production"],
+                },
+            )
+        else:
+            r = requests.post(
+                f"{VERCEL_API}/v10/projects/{safe_name}/env",
+                headers=headers,
+                json={
+                    "key":    key,
+                    "value":  str(value),
+                    "type":   "plain",
+                    "target": ["production"],
+                },
+            )
+
+        if not r.ok:
+            logger.warning(
+                f"Vercel: failed to set env var '{key}' "
+                f"({r.status_code}): {r.text[:200]}"
+            )
+        else:
+            logger.info(f"Vercel: upserted env var '{key}'")
+
+
+# ── Stable domain ─────────────────────────────────────────────────────────────
+
+def get_vercel_project_domain(project_name: str, token: str) -> str | None:
+    """
+    Returns the stable production domain for a Vercel project.
+
+    The deployment URL returned from POST /v13/deployments is a one-time
+    URL tied to that specific build (e.g. project-abc123-user.vercel.app).
+    The stable project domain (e.g. project.vercel.app) comes from the
+    project's alias list, which persists across all deployments.
+    """
+    safe_name = sanitize_vercel_name(project_name)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = requests.get(
+        f"{VERCEL_API}/v9/projects/{safe_name}",
+        headers=headers,
+    )
+    if not resp.ok:
+        logger.warning(f"Vercel: could not fetch project domain ({resp.status_code})")
+        return None
+
+    aliases = resp.json().get("alias", [])
+    if not aliases:
+        return None
+
+    domains = [a["domain"] for a in aliases if a.get("domain")]
+    if not domains:
+        return None
+
+    stable = min(domains, key=len)
+    return f"https://{stable}"
+
+
+
+def trigger_vercel_deploy(
+    project_name:    str,
+    repo_url:        str,
+    env_vars:        dict,
+    token:           str,
+    root_dir:        str = None,
+    build_command:   str = None,
+    install_command: str = None,
+) -> dict:
+    """
+    Set project-level env vars then trigger a production deployment.
+    Returns a dict containing the stable project domain under 'url'.
+    """
+    safe_name = sanitize_vercel_name(project_name)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+    }
+
+    upsert_vercel_env_vars(project_name, env_vars, token)
+
+    proj_resp = requests.get(
+        f"{VERCEL_API}/v9/projects/{safe_name}",
+        headers=headers,
+    )
     if not proj_resp.ok:
-        raise Exception(f"Failed to fetch Vercel project details to retrieve repoId: {proj_resp.text}")
-    
-    proj_data = proj_resp.json()
-    repo_id = proj_data.get("link", {}).get("repoId")
-    
-    # Fallback to GitHub public API if repoId isn't on the Vercel project object
+        raise Exception(
+            f"Failed to fetch Vercel project to get repoId: {proj_resp.text}"
+        )
+
+    repo_id = proj_resp.json().get("link", {}).get("repoId")
+
     if not repo_id:
         repo_parts = repo_url.replace("https://github.com/", "").split("/")[-2:]
         if len(repo_parts) == 2:
-            owner, repo = repo_parts[0], repo_parts[1].replace(".git", "")
-            gh_resp = requests.get(f"https://api.github.com/repos/{owner}/{repo}")
-            if gh_resp.ok:
-                repo_id = gh_resp.json().get("id")
+            owner = repo_parts[0]
+            repo  = repo_parts[1].replace(".git", "")
+            gh    = requests.get(f"https://api.github.com/repos/{owner}/{repo}")
+            if gh.ok:
+                repo_id = gh.json().get("id")
 
     if not repo_id:
-        raise Exception("Vercel could not determine the GitHub repoId. Ensure the repository is correctly linked and the Vercel GitHub Integration is fully installed.")
+        raise Exception(
+            "Vercel could not determine the GitHub repoId. "
+            "Ensure the Vercel GitHub Integration is installed."
+        )
 
-    vercel_envs = {str(k): str(v) for k, v in env_vars.items()}
-
-    payload = {
-        "name": safe_name,
+    payload: dict = {
+        "name":    safe_name,
         "project": safe_name,
-        "target": "production",
+        "target":  "production",
         "gitSource": {
-            "type": "github",
+            "type":   "github",
             "repoId": repo_id,
-            "ref": "main",
+            "ref":    "main",
         },
-        "env": vercel_envs,
-        "projectSettings": {}
+        "projectSettings": {},
     }
-    
+
     if root_dir:
         payload["projectSettings"]["rootDirectory"] = root_dir
     if build_command:
         payload["projectSettings"]["buildCommand"] = build_command
     if install_command:
         payload["projectSettings"]["installCommand"] = install_command
-        
+
     if not payload["projectSettings"]:
         del payload["projectSettings"]
 
-    response = requests.post(f"{VERCEL_API}/v13/deployments", headers=headers, json=payload)
+    response = requests.post(
+        f"{VERCEL_API}/v13/deployments",
+        headers=headers,
+        json=payload,
+    )
 
     if not response.ok:
         try:
-            error_data = response.json()
-            err_dict = error_data.get("error", {})
-            if err_dict.get("code") == "bad_request" and "install the GitHub integration first" in err_dict.get("message", ""):
-                raise Exception(f"GITHUB_INTEGRATION_MISSING: vercel | {repo_url}")
+            err = response.json().get("error", {})
+            if "install the GitHub integration first" in err.get("message", ""):
+                raise Exception(
+                    f"GITHUB_INTEGRATION_MISSING: vercel | {repo_url}"
+                )
         except Exception as e:
             if "GITHUB_INTEGRATION_MISSING" in str(e):
-                raise e
-                
+                raise
         raise Exception(
             f"Vercel deploy failed ({response.status_code}): {response.text}"
         )
 
+    stable_url = get_vercel_project_domain(project_name, token)
+
     res_json = response.json()
-    aliases = res_json.get("alias", [])
-    if aliases:
-        # Vercel provides project aliases, use the first one if available to show the nice domain
-        res_json["url"] = aliases[0]
-        
+    if stable_url:
+        res_json["url"] = stable_url
+        logger.info(f"Vercel: deployment triggered, stable URL = {stable_url}")
+    else:
+        deploy_url = res_json.get("url") or ""
+        if deploy_url and not deploy_url.startswith("https://"):
+            deploy_url = f"https://{deploy_url}"
+        res_json["url"] = deploy_url
+        logger.info(f"Vercel: deployment triggered, fallback URL = {deploy_url}")
+
     return res_json
