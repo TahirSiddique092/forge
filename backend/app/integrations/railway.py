@@ -107,30 +107,65 @@ def ensure_railway_service(
     api_key:        str,
 ) -> str:
     """
-    Return the service ID, creating it with a GitHub source if it doesn't exist.
+    Return the service ID, creating it with a GitHub source if needed.
 
-    ServiceSourceInput is flat: { repo: "owner/repo" }
-    rootDirectory and branch are set later via serviceInstanceUpdate.
-
-    Any failure on serviceCreate when a repo source is provided is almost
-    certainly a GitHub App access issue — Railway returns the generic
-    "Problem processing request" (HTTP 400) for both schema errors and
-    missing GitHub integration, so we always surface the actionable message.
+    If a service already exists but has no GitHub source attached (left over
+    from a previous failed deploy), delete it and recreate it so the source
+    gets set correctly. Railway only allows source to be set at creation time.
     """
     safe_name = sanitize_railway_name(component_name)
 
+    # Fetch existing services including their source so we can detect
+    # services that were created without a GitHub repo attached.
     data = _gql(api_key, """
         query($id: String!) {
             project(id: $id) {
-                services { edges { node { id name } } }
+                services {
+                    edges {
+                        node {
+                            id
+                            name
+                            serviceInstances {
+                                edges {
+                                    node {
+                                        source { repo image }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     """, {"id": project_id})
 
     for e in data["project"]["services"]["edges"]:
-        if e["node"]["name"] == safe_name:
-            logger.info(f"Railway: existing service '{safe_name}'")
-            return e["node"]["id"]
+        node = e["node"]
+        if node["name"] != safe_name:
+            continue
+
+        # Check whether this service already has a GitHub source
+        instances = node.get("serviceInstances", {}).get("edges", [])
+        has_source = any(
+            inst["node"].get("source", {}).get("repo")
+            for inst in instances
+        )
+
+        if has_source:
+            logger.info(f"Railway: existing service '{safe_name}' with source")
+            return node["id"]
+
+        # Service exists but has no source — left over from a failed deploy.
+        # Delete it so we can recreate it with the source attached.
+        logger.info(
+            f"Railway: service '{safe_name}' has no source, deleting and recreating"
+        )
+        _gql(api_key, """
+            mutation serviceDelete($id: String!) {
+                serviceDelete(id: $id)
+            }
+        """, {"id": node["id"]})
+        break  # fall through to create
 
     try:
         data = _gql(api_key, """
@@ -147,10 +182,6 @@ def ensure_railway_service(
             }
         })
     except Exception as e:
-        # Railway returns the generic "Problem processing request" (HTTP 400)
-        # for BOTH schema errors and missing GitHub App access. Since the
-        # schema is correct, a 400 on serviceCreate with source.repo always
-        # means the GitHub App is not installed or lacks repo permissions.
         raise Exception(
             f"GITHUB_INTEGRATION_MISSING: railway | {repo_full_name}"
         ) from e
@@ -302,6 +333,17 @@ def trigger_railway_deploy(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+# Error substrings Railway uses when GitHub App lacks repo access.
+# This catches errors at ANY step (env vars, build config, redeploy, etc.)
+# not just at service creation time.
+_REPO_NOT_ACCESSIBLE = (
+    "not found or is not accessible",
+    "repository not found",
+    "repo not found",
+    "could not find repository",
+)
+
+
 def deploy_to_railway(
     project_name:   str,
     component_name: str,
@@ -313,27 +355,42 @@ def deploy_to_railway(
     env_vars:       dict,
     api_key:        str,
 ) -> str:
+    """
+    Idempotent full deploy sequence. Any Railway error that indicates the
+    GitHub App cannot access the repo is converted to GITHUB_INTEGRATION_MISSING
+    regardless of which step it comes from.
+    """
     logger.info(
         f"Railway deploy — project='{project_name}' "
         f"component='{component_name}' repo='{repo_full_name}'"
     )
 
-    project_id = ensure_railway_project(project_name, api_key)
-    env_id     = get_production_environment_id(project_id, api_key)
-    service_id = ensure_railway_service(
-        project_id, component_name, repo_full_name, api_key
-    )
+    try:
+        project_id = ensure_railway_project(project_name, api_key)
+        env_id     = get_production_environment_id(project_id, api_key)
+        service_id = ensure_railway_service(
+            project_id, component_name, repo_full_name, api_key
+        )
 
-    set_service_env_vars(project_id, env_id, service_id, env_vars, api_key)
-    set_service_build_config(
-        service_id, env_id,
-        start_command, build_command,
-        root_dir, branch,
-        api_key,
-    )
+        set_service_env_vars(project_id, env_id, service_id, env_vars, api_key)
+        set_service_build_config(
+            service_id, env_id,
+            start_command, build_command,
+            root_dir, branch,
+            api_key,
+        )
 
-    url = ensure_service_domain(project_id, env_id, service_id, api_key)
-    trigger_railway_deploy(env_id, service_id, api_key, repo_full_name)
+        url = ensure_service_domain(project_id, env_id, service_id, api_key)
+        trigger_railway_deploy(env_id, service_id, api_key, repo_full_name)
+
+    except Exception as e:
+        # Convert any repo-access error from any step into the standard slug
+        if any(hint in str(e).lower() for hint in _REPO_NOT_ACCESSIBLE):
+            raise Exception(
+                f"GITHUB_INTEGRATION_MISSING: railway | {repo_full_name}"
+            ) from e
+        # Re-raise everything else unchanged
+        raise
 
     logger.info(f"Railway deploy triggered — {url}")
     return url or ""
