@@ -92,6 +92,7 @@ def deploy_status():
             repo = parts[1].strip() if len(parts) > 1 else "your repository"
             
             app_name = "Railway" if provider_part == "railway" else "Vercel"
+            provider_part = "railway-app" if provider_part == "railway" else "vercel"
             app_url = f"https://github.com/apps/{provider_part}"
 
             ui.error(f"Deployment failed: {app_name} cannot access your repository.")

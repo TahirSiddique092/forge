@@ -225,6 +225,15 @@ def set_service_build_config(
     root_dir: str | None, branch: str | None,
     api_key: str,
 ) -> None:
+    """
+    Valid ServiceInstanceUpdateInput fields: startCommand, buildCommand,
+    rootDirectory — and environment-specific settings like healthcheckPath.
+
+    sourceBranch does NOT exist on ServiceInstanceUpdateInput.
+    Including it causes Railway HTTP 400 "Problem processing request",
+    which also silently prevents rootDirectory from being applied.
+    Branch is fixed to whatever was set in source at service creation time.
+    """
     settings: dict = {}
     if start_command:
         settings["startCommand"]  = start_command
@@ -232,8 +241,7 @@ def set_service_build_config(
         settings["buildCommand"]  = build_command
     if root_dir:
         settings["rootDirectory"] = root_dir.lstrip("/")
-    if branch:
-        settings["sourceBranch"]  = branch
+    # NOTE: sourceBranch intentionally omitted — not a valid field here.
 
     if not settings:
         return
