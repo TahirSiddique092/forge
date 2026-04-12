@@ -1,3 +1,10 @@
+"""
+backend/app/routes/projects.py
+
+Added: GET /projects — returns all projects owned by the current user.
+This is what the dashboard frontend calls to populate the project list.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -7,7 +14,6 @@ import uuid
 import hashlib
 from app.core.database import SessionLocal
 from app.schemas.project import CreateProjectRequest
-from app.core.database import SessionLocal
 from app.models.project import Project
 from app.models.repo_binding import RepoBinding
 from app.models.run import Run
@@ -20,8 +26,10 @@ from app.core.orchestrator import start_deployment_sequence
 
 router = APIRouter(prefix="/projects")
 
+
 class DeployPayload(BaseModel):
     component_envs: Optional[Dict[str, Dict[str, str]]] = {}
+
 
 def get_db():
     db = SessionLocal()
@@ -30,55 +38,87 @@ def get_db():
     finally:
         db.close()
 
+
+# ── List all projects for the current user ────────────────────────────────────
+
+@router.get("")
+def list_projects(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns all projects owned by the authenticated user."""
+    projects = (
+        db.query(Project)
+        .filter(Project.owner_id == current_user.id)
+        .order_by(Project.id.desc())
+        .all()
+    )
+    return {
+        "projects": [
+            {
+                "project_id": p.project_id,
+                "name":       p.name,
+                "spec":       p.spec,
+            }
+            for p in projects
+        ]
+    }
+
+
+# ── Create project ────────────────────────────────────────────────────────────
+
 @router.post("")
 @limiter.limit("20/minute")
-def create_project(request: Request, data: CreateProjectRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_project(
+    request: Request,
+    data: CreateProjectRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     project = Project(
         name=data.name,
         project_id=f"proj_{uuid.uuid4().hex[:8]}",
-        owner_id=current_user.id, 
-        spec=data.spec.dict()
+        owner_id=current_user.id,
+        spec=data.spec.dict(),
     )
-    
+
     raw_token = f"wt_{uuid.uuid4().hex}"
     hashed = hashlib.sha256(raw_token.encode()).hexdigest()
 
-    worker = WorkerToken(
-        token=hashed,       
-        project_id=project.project_id
-    )
-    
+    worker = WorkerToken(token=hashed, project_id=project.project_id)
+
     db.add(project)
     db.add(worker)
     db.commit()
     db.refresh(project)
-    db.refresh(worker)
 
     return {
         "project_details": {
             "project_id": project.project_id,
-            "name": project.name,
-            "spec": project.spec
+            "name":       project.name,
+            "spec":       project.spec,
         },
         "worker_details": {
-            "worker_token": raw_token
-        }
+            "worker_token": raw_token,
+        },
     }
+
+
+# ── Link / unlink repo ────────────────────────────────────────────────────────
 
 @router.post("/link")
 def link_project(
-    payload: dict, 
-    current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     project_id = payload.get("project_id")
     repo = payload.get("repo")
 
     project = db.query(Project).filter(
         Project.project_id == project_id,
-        Project.owner_id == current_user.id
+        Project.owner_id == current_user.id,
     ).first()
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or unauthorized")
 
@@ -86,7 +126,6 @@ def link_project(
         repo = repo.replace("https://github.com/", "").replace(".git", "")
 
     binding = db.query(RepoBinding).filter(RepoBinding.repo_full_name == repo).first()
-
     if binding:
         binding.project_id = project_id
     else:
@@ -97,14 +136,46 @@ def link_project(
     return {"status": "linked", "repo": repo, "project_id": project_id}
 
 
+@router.post("/unlink")
+def unlink_repo(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project_id = payload["project_id"]
+    repo = payload["repo"]
+
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Unauthorized")
+
+    binding = db.query(RepoBinding).filter(
+        RepoBinding.project_id == project_id,
+        RepoBinding.repo_full_name == repo,
+    ).first()
+    if not binding:
+        return {"status": "not linked"}
+
+    db.delete(binding)
+    db.commit()
+    return {"status": "unlinked"}
+
+
+# ── Status / logs / runs ──────────────────────────────────────────────────────
+
 @router.get("/{project_id}/status")
 def project_status(
-    project_id: str, 
-    current_user: User = Depends(get_current_user), # Fix 4: Added Auth
-    db: Session = Depends(get_db)
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    # Verify ownership
-    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id,
+    ).first()
     if not project:
         raise HTTPException(status_code=404)
 
@@ -114,117 +185,94 @@ def project_status(
 
     return {
         "project": project_id,
-        "run": {"commit": run.commit_sha, "status": run.status, "message": run.commit_message, "created_at": run.created_at}
+        "run": {
+            "commit":     run.commit_sha,
+            "status":     run.status,
+            "message":    run.commit_message,
+            "created_at": run.created_at,
+        },
     }
 
 
 @router.get("/{project_id}/logs")
-def project_logs(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+def project_logs(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id,
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="Unauthorized")
 
-    run = (
-        db.query(Run)
-        .filter(Run.project_id == project_id)
-        .order_by(Run.created_at.desc())
-        .first()
-    )
-
+    run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
     if not run:
         return {"status": "no runs yet"}
 
     steps = db.execute(
         text("""
             SELECT name, status, stdout, stderr, started_at, finished_at
-            FROM run_steps
-            WHERE run_id = :run_id
-            ORDER BY id
+            FROM run_steps WHERE run_id = :run_id ORDER BY id
         """),
-        {"run_id": run.id}
+        {"run_id": run.id},
     ).mappings().all()
 
     return {
-        "project": project_id,
-        "run_id": run.id,
-        "status": run.status,
-        "steps": steps,
-        "created_at": run.created_at
+        "project":    project_id,
+        "run_id":     run.id,
+        "status":     run.status,
+        "steps":      steps,
+        "created_at": run.created_at,
     }
 
-@router.post("/unlink")
-def unlink_repo(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    project_id = payload["project_id"]
-    repo = payload["repo"]
-
-    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Unauthorized")
-
-    binding = db.query(RepoBinding).filter(
-        RepoBinding.project_id == project_id,
-        RepoBinding.repo_full_name == repo
-    ).first()
-
-    if not binding:
-        return {"status": "not linked"}
-
-    db.delete(binding)
-    db.commit()
-
-    return {"status": "unlinked"}
 
 @router.get("/{project_id}/runs")
 def project_runs(
     project_id: str,
     limit: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    
     project = db.query(Project).filter(
         Project.project_id == project_id,
-        Project.owner_id == current_user.id  # ← security check
+        Project.owner_id == current_user.id,
     ).first()
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    q = (
-        db.query(Run)
-        .filter(Run.project_id == project_id)
-        .order_by(Run.created_at.desc())
-    )
 
+    q = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc())
     if limit:
         q = q.limit(limit)
-
-    runs = q.all()
 
     return {
         "project": project_id,
         "runs": [
             {
-                "commit": r.commit_sha,
-                "message": r.commit_message,
-                "status": r.status,
+                "commit":     r.commit_sha,
+                "message":    r.commit_message,
+                "status":     r.status,
                 "created_at": r.created_at,
             }
-            for r in runs
+            for r in q.all()
         ],
     }
 
+
 @router.get("/{project_id}/runs/{index}/logs")
-def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    
+def run_logs(
+    project_id: str,
+    index: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     project = db.query(Project).filter(
         Project.project_id == project_id,
-        Project.owner_id == current_user.id
+        Project.owner_id == current_user.id,
     ).first()
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
     if index < 1:
         raise HTTPException(status_code=400, detail="Index must be >= 1")
 
@@ -236,7 +284,6 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current
         .limit(1)
         .first()
     )
-
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -248,76 +295,86 @@ def run_logs(project_id: str, index: int, db: Session = Depends(get_db), current
     )
 
     return {
-        "project": project_id,
-        "run_index": index,   
-        "status": run.status,
-        "commit": run.commit_sha,
-        "message": run.commit_message,
+        "project":   project_id,
+        "run_index": index,
+        "status":    run.status,
+        "commit":    run.commit_sha,
+        "message":   run.commit_message,
         "created_at": run.created_at.isoformat(),
         "steps": [
             {
-                "name": s.name,
-                "order": s.step_order,
-                "status": s.status,
+                "name":       s.name,
+                "order":      s.step_order,
+                "status":     s.status,
                 "started_at": s.started_at,
                 "finished_at": s.finished_at,
-                "stdout": s.stdout or "",
-                "stderr": s.stderr or "",
+                "stdout":     s.stdout or "",
+                "stderr":     s.stderr or "",
             }
             for s in steps
-        ]
+        ],
     }
-    
+
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+
 @router.post("/{project_id}/deploy")
 async def deploy_project(
-    project_id: str, 
+    project_id: str,
     background_tasks: BackgroundTasks,
     payload: DeployPayload = None,
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-
-    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id,
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    last_run = db.query(Run).filter(Run.project_id == project_id, Run.status == "success").order_by(Run.created_at.desc()).first()
-
+    last_run = (
+        db.query(Run)
+        .filter(Run.project_id == project_id, Run.status == "success")
+        .order_by(Run.created_at.desc())
+        .first()
+    )
     if not last_run:
         raise HTTPException(status_code=400, detail="No successful builds found. Fix your code first!")
 
-    last_run.deploy_status = "initiated" 
+    last_run.deploy_status = "initiated"
     db.commit()
 
     envs = payload.component_envs if payload and payload.component_envs else {}
     background_tasks.add_task(start_deployment_sequence, project.id, last_run.id, envs)
 
     return {
-        "message": "🚀 Deployment initiated!",
-        "run_id": last_run.id,
-        "status_command": f"forge deploy-status"
+        "message":        "Deployment initiated.",
+        "run_id":         last_run.id,
+        "status_command": "forge deploy-status",
     }
-    
+
 
 @router.get("/{project_id}/deploy/status")
 def get_deploy_status(
-    project_id: str, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.project_id == project_id, Project.owner_id == current_user.id).first()
+    project = db.query(Project).filter(
+        Project.project_id == project_id,
+        Project.owner_id == current_user.id,
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-   
     run = db.query(Run).filter(Run.project_id == project_id).order_by(Run.created_at.desc()).first()
-    
     if not run or not run.deploy_status:
         return {"status": "no_deployment_found"}
 
     return {
-        "project_id": project_id,
-        "deploy_status": run.deploy_status, 
-        "components": run.component_results, 
-        "updated_at": run.created_at 
+        "project_id":    project_id,
+        "deploy_status": run.deploy_status,
+        "components":    run.component_results,
+        "updated_at":    run.created_at,
     }
