@@ -5,7 +5,7 @@ import webbrowser
 from forge.config import load_config
 from forge import ui
 
-BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-wwp9.onrender.com")
+BACKEND_URL = os.getenv("FORGE_BACKEND_URL", "https://forge-backend-cpj5.onrender.com")
 
 
 def deploy_status():
