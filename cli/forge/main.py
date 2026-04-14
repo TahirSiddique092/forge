@@ -1,15 +1,22 @@
 import typer
-from forge.commands.init         import init
-from forge.commands.login        import login
-from forge.commands.create       import create
-from forge.commands.link         import link
-from forge.commands.unlink       import unlink
-from forge.commands.status       import status
-from forge.commands.logs         import logs
-from forge.commands.deploy       import deploy
+from forge.commands.init          import init
+from forge.commands.login         import login
+from forge.commands.create        import create
+from forge.commands.link          import link
+from forge.commands.unlink        import unlink
+from forge.commands.status        import status
+from forge.commands.logs          import logs
+from forge.commands.deploy        import deploy
 from forge.commands.deploy_status import deploy_status
-from forge.commands.credentials  import set_credential
-from forge.commands.worker       import worker_app
+from forge.commands.credentials   import set_credential
+from forge.commands.worker        import worker_app
+
+__version__ = "0.1.1"
+
+def version_callback(value: bool):
+    if value:
+        typer.echo(f"forge {__version__}")
+        raise typer.Exit()
 
 app = typer.Typer(
     name="forge",
@@ -32,8 +39,20 @@ Typical workflow:
   forge deploy-status                 Track deployment progress
 """,
     no_args_is_help=True,
-    pretty_exceptions_enable=False,   # Keep stack traces clean in prod
+    pretty_exceptions_enable=False,
 )
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version", "-v",
+        help="Show the current version and exit.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+):
+    pass
 
 app.command()(init)
 app.command()(login)
